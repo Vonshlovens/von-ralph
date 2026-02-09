@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -o pipefail
+
+if ! command -v jq &>/dev/null; then
+  echo "Error: jq is not installed. Install it with: sudo apt install jq"
+  exit 1
+fi
+
+if [ -z "$1" ]; then
+  echo "Usage: ralph-marathon <prompt>"
+  exit 1
+fi
+
+PROMPT="$1"
+RATE_LIMIT_SLEEP=1800  # 30 minutes
+
+cleanup() {
+  echo " Stopped."
+  pkill -TERM -P $$ 2>/dev/null
+  sleep 0.1
+  pkill -KILL -P $$ 2>/dev/null
+  exit 0
+}
+
+trap cleanup INT TERM
+
+while true; do
+  OUTPUT=$(claude -p --model=opus --dangerously-skip-permissions \
+    "$PROMPT" \
+    --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
+  | jq -r '
+    if .type == "assistant" then
+      .message.content[]? |
+      if .type == "text" then
+        "💬 " + .text
+      elif .type == "tool_use" then
+        "🔧 " + .name + ": " + (.input | tostring | .[0:150])
+      else empty end
+    elif .type == "user" then
+      .message.content[]? |
+      if .type == "tool_result" then
+        "📋 " + (.content | tostring | .[0:200])
+      else empty end
+    else empty end
+  ')
+
+  echo "$OUTPUT"
+  echo "--- RUN COMPLETE ---"
+
+  if echo "$OUTPUT" | grep -q "You've hit your limit"; then
+    echo "⏳ Rate limited. Sleeping 30 minutes ($(date -d '+30 minutes' '+%H:%M:%S' 2>/dev/null || date -v+30M '+%H:%M:%S' 2>/dev/null || echo '~30m from now'))..."
+    sleep "$RATE_LIMIT_SLEEP" &
+    wait $!
+  else
+    sleep 2 &
+    wait $!
+  fi
+done
