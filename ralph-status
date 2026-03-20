@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Show status of all running ralph instances
 
+shopt -s nullglob
+
 RALPH_DIR="$HOME/.ralph"
 PID_DIR="$RALPH_DIR/pids"
 LOG_DIR="$RALPH_DIR/logs"
@@ -14,7 +16,7 @@ case "${1:-list}" in
   list|ls)
     echo "── Active Ralphs ──"
     found=false
-    for meta in "$PID_DIR"/*.meta 2>/dev/null; do
+    for meta in "$PID_DIR"/*.meta; do
       [ -f "$meta" ] || continue
       name=$(grep '^name=' "$meta" | cut -d= -f2-)
       pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
@@ -50,7 +52,12 @@ case "${1:-list}" in
     name="$2"
     if [ -z "$name" ]; then
       # Tail the most recent log
-      log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -1)
+      logs=("$LOG_DIR"/*.log)
+      if [ ${#logs[@]} -eq 0 ]; then
+        echo "No logs found."
+        exit 1
+      fi
+      log=$(ls -t "$LOG_DIR"/*.log | head -1)
     else
       log="$LOG_DIR/${name}.log"
     fi
@@ -65,7 +72,12 @@ case "${1:-list}" in
   log)
     name="$2"
     if [ -z "$name" ]; then
-      log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -1)
+      logs=("$LOG_DIR"/*.log)
+      if [ ${#logs[@]} -eq 0 ]; then
+        echo "No logs found."
+        exit 1
+      fi
+      log=$(ls -t "$LOG_DIR"/*.log | head -1)
     else
       log="$LOG_DIR/${name}.log"
     fi
@@ -79,7 +91,12 @@ case "${1:-list}" in
 
   logs)
     echo "── Ralph Logs ──"
-    ls -lht "$LOG_DIR"/*.log 2>/dev/null || echo "  No logs found."
+    logs=("$LOG_DIR"/*.log)
+    if [ ${#logs[@]} -eq 0 ]; then
+      echo "  No logs found."
+    else
+      ls -lht "$LOG_DIR"/*.log
+    fi
     ;;
 
   kill)
@@ -89,7 +106,7 @@ case "${1:-list}" in
       exit 1
     fi
     if [ "$name" = "all" ]; then
-      for meta in "$PID_DIR"/*.meta 2>/dev/null; do
+      for meta in "$PID_DIR"/*.meta; do
         [ -f "$meta" ] || continue
         pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
         n=$(grep '^name=' "$meta" | cut -d= -f2-)
@@ -114,7 +131,7 @@ case "${1:-list}" in
 
   clean)
     echo "Cleaning dead ralph metadata..."
-    for meta in "$PID_DIR"/*.meta 2>/dev/null; do
+    for meta in "$PID_DIR"/*.meta; do
       [ -f "$meta" ] || continue
       pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
       name=$(grep '^name=' "$meta" | cut -d= -f2-)
