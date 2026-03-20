@@ -22,21 +22,117 @@ Update specs if needed — they are the current source of truth. Rules:
 
 When you are done, ensure you have added at least one (1) new todo to the kanban.'
 
-# If first arg is a number, treat it as max_loops with default prompt
-if [[ "$1" =~ ^[0-9]+$ ]]; then
+usage() {
+  cat <<'USAGE'
+Usage: ralph [prompt] [max_runs] [options]
+
+Arguments:
+  prompt       The prompt to send each loop (default: built-in /tackle prompt)
+  max_runs     Max iterations (default: unlimited). Can be first arg if numeric.
+
+Options:
+  -d, --dir <path>     Working directory (default: current dir)
+  -m, --model <model>  Model to use (default: opus)
+  -n, --name <name>    Name this ralph instance (default: auto-generated)
+  --marathon            Enable rate-limit detection with 30min sleep
+  --no-log              Disable log files (output to terminal only)
+  -h, --help            Show this help
+
+Examples:
+  ralph 10                                          # 10 runs with default prompt
+  ralph "See AGENT_PROMPT.md" 10                    # Custom prompt, 10 runs
+  ralph "Fix all lint errors" -d ~/my-project -n lint-fixer
+  ralph --marathon                                  # Infinite with rate-limit recovery
+USAGE
+  exit 0
+}
+
+# --- Parse args ---
+PROMPT=""
+MAX_RUNS=0
+WORK_DIR=""
+MODEL="opus"
+RALPH_NAME=""
+MARATHON=false
+NO_LOG=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -d|--dir) WORK_DIR="$2"; shift 2 ;;
+    -m|--model) MODEL="$2"; shift 2 ;;
+    -n|--name) RALPH_NAME="$2"; shift 2 ;;
+    --marathon) MARATHON=true; shift ;;
+    --no-log) NO_LOG=true; shift ;;
+    -*)
+      echo "Unknown option: $1"
+      usage
+      ;;
+    *)
+      # If first positional is a number and no prompt yet, treat as max_runs (use default prompt)
+      if [ -z "$PROMPT" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+        MAX_RUNS="$1"
+        PROMPT="$DEFAULT_PROMPT"
+      elif [ -z "$PROMPT" ]; then
+        PROMPT="$1"
+      elif [ "$MAX_RUNS" -eq 0 ] 2>/dev/null && [[ "$1" =~ ^[0-9]+$ ]]; then
+        MAX_RUNS="$1"
+      else
+        echo "Unexpected argument: $1"
+        usage
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Use default prompt if none provided
+if [ -z "$PROMPT" ]; then
   PROMPT="$DEFAULT_PROMPT"
-  MAX_LOOPS="$1"
-elif [ -n "$1" ]; then
-  PROMPT="$1"
-  MAX_LOOPS="${2:-0}"
-else
-  PROMPT="$DEFAULT_PROMPT"
-  MAX_LOOPS=0
 fi
-LOOP_COUNT=0
+
+# --- Setup ---
+RALPH_DIR="$HOME/.ralph"
+LOG_DIR="$RALPH_DIR/logs"
+PID_DIR="$RALPH_DIR/pids"
+mkdir -p "$LOG_DIR" "$PID_DIR"
+
+if [ -z "$RALPH_NAME" ]; then
+  RALPH_NAME="ralph-$(date +%Y%m%d-%H%M%S)-$$"
+fi
+
+LOG_FILE="$LOG_DIR/${RALPH_NAME}.log"
+PID_FILE="$PID_DIR/${RALPH_NAME}.pid"
+META_FILE="$PID_DIR/${RALPH_NAME}.meta"
+RATE_LIMIT_SLEEP=1800
+
+# Write PID file
+echo $$ > "$PID_FILE"
+
+# Write metadata
+cat > "$META_FILE" <<EOF
+name=$RALPH_NAME
+pid=$$
+prompt=$PROMPT
+max_runs=$MAX_RUNS
+model=$MODEL
+work_dir=${WORK_DIR:-$(pwd)}
+marathon=$MARATHON
+started=$(date -Iseconds)
+EOF
+
+log() {
+  local msg="[$(date '+%H:%M:%S')] $1"
+  if [ "$NO_LOG" = false ]; then
+    echo "$msg" | tee -a "$LOG_FILE"
+  else
+    echo "$msg"
+  fi
+}
 
 cleanup() {
-  echo " Stopped."
+  log "🛑 Ralph '$RALPH_NAME' stopped after $RUN_COUNT runs."
+  rm -f "$PID_FILE" "$META_FILE"
   pkill -TERM -P $$ 2>/dev/null
   sleep 0.1
   pkill -KILL -P $$ 2>/dev/null
@@ -45,14 +141,32 @@ cleanup() {
 
 trap cleanup INT TERM
 
-while true; do
-  LOOP_COUNT=$((LOOP_COUNT + 1))
+# Change to working directory if specified
+if [ -n "$WORK_DIR" ]; then
+  cd "$WORK_DIR" || { echo "Error: cannot cd to $WORK_DIR"; exit 1; }
+fi
 
-  if [ "$MAX_LOOPS" -gt 0 ]; then
-    echo "--- LOOP $LOOP_COUNT/$MAX_LOOPS ---"
+log "🚀 Ralph '$RALPH_NAME' started (model=$MODEL, max_runs=$MAX_RUNS, dir=$(pwd))"
+log "📝 Prompt: ${PROMPT:0:120}$([ ${#PROMPT} -gt 120 ] && echo '...')"
+[ "$NO_LOG" = false ] && log "📄 Log: $LOG_FILE"
+
+RUN_COUNT=0
+
+while true; do
+  RUN_COUNT=$((RUN_COUNT + 1))
+
+  if [ "$MAX_RUNS" -gt 0 ] && [ "$RUN_COUNT" -gt "$MAX_RUNS" ]; then
+    log "✅ Reached max runs ($MAX_RUNS). Stopping."
+    break
   fi
 
-  claude -p --model=opus --dangerously-skip-permissions \
+  log "--- RUN $RUN_COUNT$([ "$MAX_RUNS" -gt 0 ] && echo "/$MAX_RUNS") ---"
+
+  # Update meta with current run
+  sed -i "s/^current_run=.*/current_run=$RUN_COUNT/" "$META_FILE" 2>/dev/null \
+    || echo "current_run=$RUN_COUNT" >> "$META_FILE"
+
+  OUTPUT=$(claude -p --model="$MODEL" --dangerously-skip-permissions \
     "$PROMPT" \
     --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
   | jq -r '
@@ -69,15 +183,32 @@ while true; do
         "📋 " + (.content | tostring | .[0:200])
       else empty end
     else empty end
-  ' &
-  wait $!
-  echo "--- RUN COMPLETE ---"
+  ')
 
-  if [ "$MAX_LOOPS" -gt 0 ] && [ "$LOOP_COUNT" -ge "$MAX_LOOPS" ]; then
-    echo "Finished $MAX_LOOPS loops."
-    exit 0
+  if [ "$NO_LOG" = false ]; then
+    echo "$OUTPUT" | tee -a "$LOG_FILE"
+  else
+    echo "$OUTPUT"
+  fi
+
+  log "--- RUN $RUN_COUNT COMPLETE ---"
+
+  # Check for errors
+  if echo "$OUTPUT" | grep -q "You've hit your limit"; then
+    if [ "$MARATHON" = true ]; then
+      log "⏳ Rate limited. Sleeping 30 minutes..."
+      sleep "$RATE_LIMIT_SLEEP" &
+      wait $!
+    else
+      log "⚠️  Rate limited. Use --marathon to auto-retry. Stopping."
+      break
+    fi
+  elif echo "$OUTPUT" | grep -qi "error\|fatal\|panic"; then
+    log "⚠️  Possible error detected in output (continuing anyway)"
   fi
 
   sleep 2 &
   wait $!
 done
+
+cleanup

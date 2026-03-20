@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Show status of all running ralph instances
+
+RALPH_DIR="$HOME/.ralph"
+PID_DIR="$RALPH_DIR/pids"
+LOG_DIR="$RALPH_DIR/logs"
+
+if [ ! -d "$PID_DIR" ]; then
+  echo "No ralph instances have been started yet."
+  exit 0
+fi
+
+case "${1:-list}" in
+  list|ls)
+    echo "── Active Ralphs ──"
+    found=false
+    for meta in "$PID_DIR"/*.meta 2>/dev/null; do
+      [ -f "$meta" ] || continue
+      name=$(grep '^name=' "$meta" | cut -d= -f2-)
+      pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
+      prompt=$(grep '^prompt=' "$meta" | cut -d= -f2-)
+      model=$(grep '^model=' "$meta" | cut -d= -f2-)
+      started=$(grep '^started=' "$meta" | cut -d= -f2-)
+      run=$(grep '^current_run=' "$meta" | cut -d= -f2-)
+      max=$(grep '^max_runs=' "$meta" | cut -d= -f2-)
+      work_dir=$(grep '^work_dir=' "$meta" | cut -d= -f2-)
+
+      if kill -0 "$pid" 2>/dev/null; then
+        status="🟢 running"
+      else
+        status="🔴 dead"
+      fi
+
+      found=true
+      echo ""
+      echo "  $name  ($status, PID $pid)"
+      echo "    Model:   $model"
+      echo "    Dir:     $work_dir"
+      echo "    Prompt:  ${prompt:0:80}$([ ${#prompt} -gt 80 ] && echo '...')"
+      echo "    Run:     ${run:-?}$([ "$max" != "0" ] && echo "/$max")"
+      echo "    Started: $started"
+    done
+
+    if [ "$found" = false ]; then
+      echo "  No ralph instances found."
+    fi
+    ;;
+
+  tail)
+    name="$2"
+    if [ -z "$name" ]; then
+      # Tail the most recent log
+      log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -1)
+    else
+      log="$LOG_DIR/${name}.log"
+    fi
+    if [ -f "$log" ]; then
+      echo "── Tailing $log ──"
+      tail -n "${3:-50}" "$log"
+    else
+      echo "No log found${name:+ for '$name'}."
+    fi
+    ;;
+
+  log)
+    name="$2"
+    if [ -z "$name" ]; then
+      log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -1)
+    else
+      log="$LOG_DIR/${name}.log"
+    fi
+    if [ -f "$log" ]; then
+      echo "$log"
+    else
+      echo "No log found${name:+ for '$name'}."
+      exit 1
+    fi
+    ;;
+
+  logs)
+    echo "── Ralph Logs ──"
+    ls -lht "$LOG_DIR"/*.log 2>/dev/null || echo "  No logs found."
+    ;;
+
+  kill)
+    name="$2"
+    if [ -z "$name" ]; then
+      echo "Usage: ralph-status kill <name|all>"
+      exit 1
+    fi
+    if [ "$name" = "all" ]; then
+      for meta in "$PID_DIR"/*.meta 2>/dev/null; do
+        [ -f "$meta" ] || continue
+        pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
+        n=$(grep '^name=' "$meta" | cut -d= -f2-)
+        if kill -0 "$pid" 2>/dev/null; then
+          kill "$pid" 2>/dev/null
+          echo "Killed $n (PID $pid)"
+        else
+          echo "Already dead: $n (PID $pid)"
+          rm -f "$meta" "$PID_DIR/${n}.pid"
+        fi
+      done
+    else
+      meta="$PID_DIR/${name}.meta"
+      if [ -f "$meta" ]; then
+        pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
+        kill "$pid" 2>/dev/null && echo "Killed $name" || echo "$name not running"
+      else
+        echo "No ralph named '$name' found."
+      fi
+    fi
+    ;;
+
+  clean)
+    echo "Cleaning dead ralph metadata..."
+    for meta in "$PID_DIR"/*.meta 2>/dev/null; do
+      [ -f "$meta" ] || continue
+      pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
+      name=$(grep '^name=' "$meta" | cut -d= -f2-)
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$meta" "$PID_DIR/${name}.pid"
+        echo "  Cleaned: $name"
+      fi
+    done
+    ;;
+
+  *)
+    cat <<'USAGE'
+Usage: ralph-status <command> [args]
+
+Commands:
+  list           Show all ralph instances and their status (default)
+  tail [name] [n]  Show last n lines of a ralph's log (default: most recent, 50 lines)
+  log [name]     Print log file path (for piping)
+  logs           List all log files
+  kill <name|all>  Kill a ralph instance (or all)
+  clean          Remove metadata for dead instances
+USAGE
+    ;;
+esac
