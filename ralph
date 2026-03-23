@@ -131,10 +131,13 @@ log() {
 }
 
 cleanup() {
+  # Prevent re-entry from repeated Ctrl-C
+  trap - INT TERM
   log "🛑 Ralph '$RALPH_NAME' stopped after $RUN_COUNT runs."
   rm -f "$PID_FILE" "$META_FILE"
-  # Kill entire process group (children, grandchildren, etc.)
-  kill -- -$$ 2>/dev/null
+  # Kill child processes only (not ourselves)
+  pkill -TERM -P $$ 2>/dev/null
+  wait 2>/dev/null
   exit 0
 }
 
@@ -165,10 +168,11 @@ while true; do
   sed -i "s/^current_run=.*/current_run=$RUN_COUNT/" "$META_FILE" 2>/dev/null \
     || echo "current_run=$RUN_COUNT" >> "$META_FILE"
 
-  OUTPUT=$(claude -p --model="$MODEL" --dangerously-skip-permissions \
+  OUTPUT_TMP=$(mktemp)
+  claude -p --model="$MODEL" --dangerously-skip-permissions \
     "$PROMPT" \
     --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
-  | jq -r '
+  | jq --unbuffered -r '
     if .type == "assistant" then
       .message.content[]? |
       if .type == "text" then
@@ -182,13 +186,13 @@ while true; do
         "📋 " + (.content | tostring | .[0:200])
       else empty end
     else empty end
-  ')
-
-  if [ "$NO_LOG" = false ]; then
-    echo "$OUTPUT" | tee -a "$LOG_FILE"
+  ' | if [ "$NO_LOG" = false ]; then
+    tee -a "$LOG_FILE" "$OUTPUT_TMP"
   else
-    echo "$OUTPUT"
+    tee "$OUTPUT_TMP"
   fi
+  OUTPUT=$(<"$OUTPUT_TMP")
+  rm -f "$OUTPUT_TMP"
 
   log "--- RUN $RUN_COUNT COMPLETE ---"
 
