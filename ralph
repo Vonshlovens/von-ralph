@@ -230,6 +230,27 @@ while true; do
       else empty end
     else empty end
   '
+  CODEX_JQ_FILTER='
+    fromjson? |
+    if . == null then
+      empty
+    elif .type == "item.completed" and (.item.type // "") == "agent_message" then
+      "💬 " + (.item.text // "")
+    elif .type == "item.completed" and (.item.type // "") == "command_execution" then
+      ("🔧 " + ((.item.command // "") | gsub("\\s+"; " ") | .[0:150])),
+      (if (((.item.aggregated_output // "") | gsub("\\s+"; " ")) | length) > 0 then
+         "📋 " + (((.item.aggregated_output // "") | gsub("\\s+"; " ")) | .[0:200])
+       else
+         empty
+       end)
+    elif .type == "error" then
+      "⚠️ " + ((.message // "") | .[0:300])
+    elif .type == "turn.failed" then
+      "⚠️ " + ((.error.message // "") | .[0:300])
+    else
+      empty
+    end
+  '
   case "$CLI_BIN" in
     claude)
       claude -p --model="$MODEL" --dangerously-skip-permissions \
@@ -239,7 +260,8 @@ while true; do
       | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
       ;;
     codex)
-      codex exec --dangerously-bypass-approvals-and-sandbox --model "$MODEL" "$PROMPT" </dev/null 2>&1 \
+      codex exec --dangerously-bypass-approvals-and-sandbox --json --model "$MODEL" "$PROMPT" </dev/null 2>&1 \
+      | jq --unbuffered -Rr "$CODEX_JQ_FILTER" \
       | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
       ;;
     gemini)

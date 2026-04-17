@@ -7,7 +7,11 @@
       "type": "short-term",
       "priority": "high",
       "status": "done",
-      "tags": ["bug", "portability", "config"],
+      "tags": [
+        "bug",
+        "portability",
+        "config"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "ralph-tui/src/ralph.rs"
@@ -21,7 +25,10 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "orchestration"],
+      "tags": [
+        "feature",
+        "orchestration"
+      ],
       "files": [
         "ralph"
       ],
@@ -34,13 +41,19 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "orchestration", "ux"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "ux"
+      ],
       "files": [
         "ralph-tui/src/app.rs",
         "ralph-tui/src/ui.rs",
         "ralph-tui/src/ralph.rs"
       ],
-      "depends_on": ["TASK-002a"]
+      "depends_on": [
+        "TASK-002a"
+      ]
     },
     {
       "id": "TASK-002c",
@@ -49,12 +62,18 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "orchestration", "ux"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "ux"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "dashboard/src/routes/+page.svelte"
       ],
-      "depends_on": ["TASK-002a"]
+      "depends_on": [
+        "TASK-002a"
+      ]
     },
     {
       "id": "TASK-003a",
@@ -63,7 +82,11 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability", "logging"],
+      "tags": [
+        "feature",
+        "observability",
+        "logging"
+      ],
       "files": [
         "ralph",
         "ralph-status"
@@ -77,12 +100,17 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability"],
+      "tags": [
+        "feature",
+        "observability"
+      ],
       "files": [
         "ralph-tui/src/ralph.rs",
         "ralph-tui/src/ui.rs"
       ],
-      "depends_on": ["TASK-003a"]
+      "depends_on": [
+        "TASK-003a"
+      ]
     },
     {
       "id": "TASK-004a",
@@ -90,12 +118,18 @@
       "description": "Add an --isolated flag to the ralph bash script. When set: before spawning, create a git worktree in a temp dir (git worktree add /tmp/ralph-<name>-<ts> -b ralph/<name>), cd into it, run the agent there, and on exit optionally push the branch and open a PR via gh. Cleanup the worktree after PR is opened or on --no-pr. Scope: ralph bash script only.",
       "type": "long-term",
       "priority": "high",
-      "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
+      "status": "in_progress",
+      "tags": [
+        "feature",
+        "orchestration",
+        "git"
+      ],
       "files": [
         "ralph"
       ],
-      "depends_on": ["TASK-001"]
+      "depends_on": [
+        "TASK-001"
+      ]
     },
     {
       "id": "TASK-004b",
@@ -104,12 +138,18 @@
       "type": "long-term",
       "priority": "high",
       "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "git"
+      ],
       "files": [
         "ralph-tui/src/ralph.rs",
         "ralph-tui/src/ui.rs"
       ],
-      "depends_on": ["TASK-004a"]
+      "depends_on": [
+        "TASK-004a"
+      ]
     },
     {
       "id": "TASK-004c",
@@ -118,12 +158,18 @@
       "type": "long-term",
       "priority": "high",
       "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "git"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "dashboard/src/routes/+page.svelte"
       ],
-      "depends_on": ["TASK-004a"]
+      "depends_on": [
+        "TASK-004a"
+      ]
     },
     {
       "id": "TASK-005a",
@@ -132,11 +178,18 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-pipeline"
       ],
-      "depends_on": ["TASK-002a", "TASK-004a"]
+      "depends_on": [
+        "TASK-002a",
+        "TASK-004a"
+      ]
     },
     {
       "id": "TASK-005b",
@@ -145,11 +198,17 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-pipeline"
       ],
-      "depends_on": ["TASK-005a"]
+      "depends_on": [
+        "TASK-005a"
+      ]
     },
     {
       "id": "TASK-005c",
@@ -158,11 +217,18 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-pipeline"
       ],
-      "depends_on": ["TASK-005b", "TASK-002a"]
+      "depends_on": [
+        "TASK-005b",
+        "TASK-002a"
+      ]
     },
     {
       "id": "TASK-005d",
@@ -171,13 +237,19 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-tui/src/app.rs",
         "ralph-tui/src/ui.rs",
         "dashboard/src/routes/+page.svelte"
       ],
-      "depends_on": ["TASK-005b"]
+      "depends_on": [
+        "TASK-005b"
+      ]
     },
     {
       "id": "TASK-006a",
@@ -186,12 +258,19 @@
       "type": "long-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability", "dashboard", "analytics"],
+      "tags": [
+        "feature",
+        "observability",
+        "dashboard",
+        "analytics"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "dashboard/src/routes/analytics/+page.server.ts"
       ],
-      "depends_on": ["TASK-003a"]
+      "depends_on": [
+        "TASK-003a"
+      ]
     },
     {
       "id": "TASK-006b",
@@ -200,11 +279,18 @@
       "type": "long-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability", "dashboard", "analytics"],
+      "tags": [
+        "feature",
+        "observability",
+        "dashboard",
+        "analytics"
+      ],
       "files": [
         "dashboard/src/routes/analytics/+page.svelte"
       ],
-      "depends_on": ["TASK-006a"]
+      "depends_on": [
+        "TASK-006a"
+      ]
     }
   ]
 }
