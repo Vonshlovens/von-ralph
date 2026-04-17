@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -o pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF_RALPH="$SCRIPT_DIR/$(basename "$0")"
+if [[ -x "$SELF_RALPH" ]]; then
+  export RALPH_BIN="${RALPH_BIN:-$SELF_RALPH}"
+fi
+
+if [[ "${1:-}" == "taskq" ]]; then
+  shift
+  if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required for 'ralph taskq'"
+    exit 1
+  fi
+  exec python3 "$SCRIPT_DIR/scripts/ralph_taskq.py" "$@"
+fi
+
 if ! command -v jq &>/dev/null; then
   echo "Error: jq is not installed. Install it with: sudo apt install jq"
   exit 1
@@ -25,6 +40,7 @@ When you are done, ensure you have added at least one (1) new todo to the kanban
 usage() {
   cat <<'USAGE'
 Usage: ralph [prompt] [max_runs] [options]
+       ralph taskq <subcommand> [args]
 
 Arguments:
   prompt       The prompt to send each loop (default: built-in /tackle prompt)
@@ -39,11 +55,17 @@ Options:
   --no-log              Disable log files (output to terminal only)
   -h, --help            Show this help
 
+Task board:
+  taskq                 Cross-repo task board query/update utility
+
 Examples:
   ralph 10                                          # 10 runs with default prompt
   ralph "See AGENT_PROMPT.md" 10                    # Custom prompt, 10 runs
   ralph "Fix all lint errors" -d ~/my-project -n lint-fixer
   ralph --marathon                                  # Infinite with rate-limit recovery
+  ralph taskq next                                  # Pick next actionable task
+  ralph taskq task TASK-004a                        # Show task details
+  ralph taskq set-status TASK-004a in_progress      # Update task status
 USAGE
   exit 0
 }

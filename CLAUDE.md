@@ -31,7 +31,17 @@ Headless Claude Code agent loop runner. Bash scripts handle process management a
 
 ## Workflow
 
-`docs/tasks.json` tracks tasks. Pick up tasks and update status when working a session — lightweight, no ceremony required.
+Use `ralph taskq` to discover/query/update the repo's task board. It supports JSON/YAML/Markdown boards with common task-list keywords.
+
+Agents should start task selection with `ralph taskq next`, then query full details with `ralph taskq task <TASK-REF>`.
+
+Use `ralph taskq chain <TASK-REF>` when chain-local context is needed.
+
+Use `ralph taskq set-status` and `ralph taskq add-task` for board updates.
+
+When running from presets, treat preset `dir` as the repo root/start path for task discovery.
+
+Agents must not read full board files directly unless explicitly prompted to do so.
 
 ## Docs
 

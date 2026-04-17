@@ -473,7 +473,7 @@ impl App {
                     self.launch_form.reset();
                     self.launch_form.fields[0].set(&p.prompt);
                     self.launch_form.fields[1].set(&p.model);
-                    self.launch_form.fields[2].set(&p.dir);
+                    if !p.dir.is_empty() { self.launch_form.fields[2].set(&p.dir); }
                     self.launch_form.fields[4].set(&p.max_runs.to_string());
                     self.launch_form.fields[5].set(if p.marathon { "true" } else { "false" });
                     self.launch_form.focused = 1; // land on Model so user can Tab → Max runs

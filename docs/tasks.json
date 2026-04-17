@@ -6,7 +6,7 @@
       "description": "Replace hardcoded absolute paths to the ralph binary with a config discovery layer: check $RALPH_BIN env var first, then PATH lookup, then relative-to-binary fallback. Affects dashboard server (const RALPH_BIN in ralph.ts) and Rust TUI spawn calls in ralph.rs. Small scoped change across 2 files.",
       "type": "short-term",
       "priority": "high",
-      "status": "todo",
+      "status": "done",
       "tags": ["bug", "portability", "config"],
       "files": [
         "dashboard/src/lib/server/ralph.ts",

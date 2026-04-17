@@ -461,8 +461,20 @@ fn clean_meta(name: &str) {
     let _ = fs::remove_file(pid_dir().join(format!("{}.pid", name)));
 }
 
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(name))
+            .find(|p| p.is_file())
+    })
+}
+
 pub fn ralph_bin_path() -> PathBuf {
-    // Try relative to the binary's location first, then fallback
+    // 1. Explicit env var override
+    if let Ok(p) = std::env::var("RALPH_BIN") {
+        return PathBuf::from(p);
+    }
+    // 2. Relative to the TUI binary (works in dev checkout)
     if let Ok(exe) = std::env::current_exe() {
         let candidate = exe
             .parent()
@@ -472,15 +484,27 @@ pub fn ralph_bin_path() -> PathBuf {
             return candidate;
         }
     }
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join("projects/von-ralph/ralph")
+    // 3. Search PATH
+    if let Some(found) = find_in_path("ralph") {
+        return found;
+    }
+    // 4. Bare name — let the OS try at spawn time
+    PathBuf::from("ralph")
 }
 
 pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {
     let bin = ralph_bin_path();
-    if !bin.exists() {
-        anyhow::bail!("ralph binary not found at {}", bin.display());
+    if bin.is_absolute() && !bin.exists() {
+        anyhow::bail!(
+            "ralph binary not found at {}\nHint: set $RALPH_BIN or add ralph to your PATH",
+            bin.display()
+        );
+    }
+    if !opts.dir.is_empty() {
+        let dir_path = PathBuf::from(&opts.dir);
+        if !dir_path.exists() {
+            anyhow::bail!("working directory does not exist: {}", opts.dir);
+        }
     }
 
     let mut args: Vec<String> = Vec::new();

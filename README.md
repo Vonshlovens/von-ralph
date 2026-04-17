@@ -10,6 +10,7 @@ Headless Claude Code agent loops, inspired by the [Ralph Wiggum technique](https
 | `alph` | Single headless run (no loop) |
 | `ralph-marathon` | Legacy infinite loop with rate-limit sleep (use `ralph --marathon` instead) |
 | `ralph-status` | Monitor running ralphs — list, tail logs, kill instances |
+| `ralph taskq` | Cross-repo task board discovery/query/update (JSON/YAML/Markdown) |
 
 ## Quick start
 
@@ -28,6 +29,12 @@ ralph-status tail kanban-worker
 
 # Kill it
 ralph-status kill kanban-worker
+
+# Query next actionable task from discovered board
+ralph taskq next
+
+# Query full task context
+ralph taskq task TASK-004a
 ```
 
 ## Claude Code skill

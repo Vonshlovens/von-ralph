@@ -9,7 +9,15 @@ const execAsync = promisify(exec);
 const RALPH_DIR = join(homedir(), '.ralph');
 const PID_DIR = join(RALPH_DIR, 'pids');
 const LOG_DIR = join(RALPH_DIR, 'logs');
-const RALPH_BIN = join(homedir(), 'von-ralph', 'ralph');
+async function findRalphBin(): Promise<string> {
+	if (process.env.RALPH_BIN) return process.env.RALPH_BIN;
+	try {
+		const { stdout } = await execAsync('which ralph');
+		const p = stdout.trim();
+		if (p) return p;
+	} catch { /* not in PATH */ }
+	return 'ralph';
+}
 
 export interface RalphInstance {
 	name: string;
@@ -249,7 +257,8 @@ export interface SpawnOptions {
 	marathon?: boolean;
 }
 
-export function spawnRalph(opts: SpawnOptions): { name: string; pid: number } {
+export async function spawnRalph(opts: SpawnOptions): Promise<{ name: string; pid: number }> {
+	const RALPH_BIN = await findRalphBin();
 	const args: string[] = [];
 
 	if (opts.prompt) {
