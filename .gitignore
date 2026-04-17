@@ -4,3 +4,6 @@ dashboard/node_modules
 dashboard/.svelte-kit
 dashboard/build
 ralph-tui/target
+.codex
+__pycache__/
+*.pyc

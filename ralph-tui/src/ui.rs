@@ -43,6 +43,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_list(frame, app);
             render_restart(frame, app);
         }
+        View::Inject => {
+            match app.inject_return_view {
+                View::Log => render_log(frame, app),
+                _ => render_list(frame, app),
+            }
+            render_inject(frame, app);
+        }
     }
     if app.show_presets {
         render_presets_popup(frame, app);
@@ -53,7 +60,7 @@ fn render_list(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // title
+            Constraint::Length(1), // title
             Constraint::Min(5),    // table
             Constraint::Length(4), // prompt preview
             Constraint::Length(1), // status/keybinds
@@ -62,8 +69,18 @@ fn render_list(frame: &mut Frame, app: &mut App) {
 
     // Title bar
     let title = Line::from(vec![
-        Span::styled(" RALPH TUI ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw(format!("  {} instance{}", app.instances.len(), if app.instances.len() == 1 { "" } else { "s" })),
+        Span::styled(
+            " RALPH TUI ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!(
+            "  {} instance{}",
+            app.instances.len(),
+            if app.instances.len() == 1 { "" } else { "s" }
+        )),
     ]);
     frame.render_widget(Paragraph::new(title), chunks[0]);
 
@@ -76,7 +93,11 @@ fn render_list(frame: &mut Frame, app: &mut App) {
         Cell::from("Dir"),
         Cell::from("Started"),
     ])
-    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+    .style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )
     .height(1);
 
     let rows: Vec<Row> = app
@@ -95,9 +116,10 @@ fn render_list(frame: &mut Frame, app: &mut App) {
             } else {
                 "-".to_string()
             };
-            let dir = inst
-                .work_dir
-                .replace(dirs::home_dir().unwrap_or_default().to_str().unwrap_or(""), "~");
+            let dir = inst.work_dir.replace(
+                dirs::home_dir().unwrap_or_default().to_str().unwrap_or(""),
+                "~",
+            );
             let started = if inst.started.len() > 19 {
                 inst.started[..19].to_string()
             } else {
@@ -127,7 +149,11 @@ fn render_list(frame: &mut Frame, app: &mut App) {
     )
     .header(header)
     .block(Block::default().borders(Borders::ALL).title(" Instances "))
-    .row_highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )
     .highlight_symbol("▸ ");
 
     let mut state = TableState::default();
@@ -148,15 +174,18 @@ fn render_list(frame: &mut Frame, app: &mut App) {
 
     // Status/keybind bar
     let bar = if !app.status_msg.is_empty() {
-        Line::from(vec![
-            Span::styled(format!(" {} ", app.status_msg), Style::default().fg(Color::Yellow)),
-        ])
+        Line::from(vec![Span::styled(
+            format!(" {} ", app.status_msg),
+            Style::default().fg(Color::Yellow),
+        )])
     } else {
         Line::from(vec![
             Span::styled(" Enter", Style::default().fg(Color::Cyan)),
             Span::raw(" log  "),
             Span::styled("K", Style::default().fg(Color::Cyan)),
             Span::raw(" kill  "),
+            Span::styled("i", Style::default().fg(Color::Cyan)),
+            Span::raw(" inject  "),
             Span::styled("p", Style::default().fg(Color::Cyan)),
             Span::raw(" presets  "),
             Span::styled("n", Style::default().fg(Color::Cyan)),
@@ -179,15 +208,25 @@ fn render_log(frame: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // title
-            Constraint::Min(3),   // log content
+            Constraint::Min(3),    // log content
             Constraint::Length(1), // keybinds
         ])
         .split(frame.area());
 
     // Title
-    let follow_indicator = if app.log_auto_follow { " [auto-follow]" } else { "" };
+    let follow_indicator = if app.log_auto_follow {
+        " [auto-follow]"
+    } else {
+        ""
+    };
     let title = Line::from(vec![
-        Span::styled(" LOG: ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " LOG: ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!("{} ", app.log_instance_name),
             Style::default().fg(Color::Black).bg(Color::Cyan),
@@ -203,7 +242,9 @@ fn render_log(frame: &mut Frame, app: &mut App) {
 
     // Log content
     let visible_height = chunks[1].height as usize;
-    let start = app.log_scroll.saturating_sub(visible_height.saturating_sub(1));
+    let start = app
+        .log_scroll
+        .saturating_sub(visible_height.saturating_sub(1));
     let end = app.log_content.len().min(start + visible_height);
 
     let lines: Vec<Line> = app.log_content[start..end]
@@ -224,8 +265,7 @@ fn render_log(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    let log_widget = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL));
+    let log_widget = Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
     frame.render_widget(log_widget, chunks[1]);
 
     // Keybind bar
@@ -244,6 +284,8 @@ fn render_log(frame: &mut Frame, app: &mut App) {
             Span::raw(" top/bottom  "),
             Span::styled("K", Style::default().fg(Color::Cyan)),
             Span::raw(" kill  "),
+            Span::styled("i", Style::default().fg(Color::Cyan)),
+            Span::raw(" inject  "),
             Span::styled("PgUp/PgDn", Style::default().fg(Color::Cyan)),
             Span::raw(" page"),
         ])
@@ -256,7 +298,12 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
     // Horizontal margin: center at 80% width, but use full width if terminal is narrow
     let area = if full.width > 60 {
         let margin = (full.width - full.width * 80 / 100) / 2;
-        Rect::new(full.x + margin, full.y, full.width - margin * 2, full.height)
+        Rect::new(
+            full.x + margin,
+            full.y,
+            full.width - margin * 2,
+            full.height,
+        )
     } else {
         full
     };
@@ -281,7 +328,10 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
     // Title
     let title = Line::from(Span::styled(
         " LAUNCH NEW RALPH ",
-        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(Paragraph::new(title), chunks[0]);
 
@@ -299,7 +349,11 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
 
         let content: Line = if i == 5 {
             // Marathon toggle
-            let display = if input.value() == "true" { " [x] enabled" } else { " [ ] disabled" };
+            let display = if input.value() == "true" {
+                " [x] enabled"
+            } else {
+                " [ ] disabled"
+            };
             Line::from(display)
         } else {
             render_input_line(input, is_focused)
@@ -307,20 +361,21 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
 
         // Skip hint slot (chunk[3]) when mapping field index to chunk index
         let chunk_idx = if i < 2 { i + 1 } else { i + 2 };
-        let widget = Paragraph::new(content)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(border_style)
-                    .title(format!(" {} ", label)),
-            );
+        let widget = Paragraph::new(content).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title(format!(" {} ", label)),
+        );
         frame.render_widget(widget, chunks[chunk_idx]);
 
         // Hint below the CLI Model field
         if i == 1 {
             let hint = Paragraph::new(Line::from(Span::styled(
                 "  e.g. \"gemini flash\"",
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
             )));
             frame.render_widget(hint, chunks[3]);
         }
@@ -348,7 +403,7 @@ fn render_restart(frame: &mut Frame, app: &mut App) {
             Constraint::Length(1), // title
             Constraint::Length(3), // info
             Constraint::Length(3), // max_runs input
-            Constraint::Min(0),   // spacer
+            Constraint::Min(0),    // spacer
             Constraint::Length(1), // keybinds
         ])
         .split(area);
@@ -356,7 +411,10 @@ fn render_restart(frame: &mut Frame, app: &mut App) {
     // Title
     let title = Line::from(Span::styled(
         " RESTART RALPH ",
-        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(Paragraph::new(title), chunks[0]);
 
@@ -367,13 +425,12 @@ fn render_restart(frame: &mut Frame, app: &mut App) {
 
     // Max runs input
     let content = render_input_line(&app.restart_form.max_runs, true);
-    let input = Paragraph::new(content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(" Max runs (0 = unlimited) "),
-        );
+    let input = Paragraph::new(content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Max runs (0 = unlimited) "),
+    );
     frame.render_widget(input, chunks[2]);
 
     // Keybind bar
@@ -386,6 +443,69 @@ fn render_restart(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Paragraph::new(bar), chunks[4]);
 }
 
+fn render_inject(frame: &mut Frame, app: &mut App) {
+    let area = centered_rect(70, 35, frame.area());
+    frame.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // title
+            Constraint::Length(3), // instance
+            Constraint::Length(3), // prompt
+            Constraint::Length(2), // hint/status
+            Constraint::Min(0),    // spacer
+            Constraint::Length(1), // keybinds
+        ])
+        .split(area);
+
+    let title = Line::from(Span::styled(
+        " PROMPT INJECTION ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(title), chunks[0]);
+
+    let instance = Paragraph::new(format!(" {}", app.inject_form.instance_name))
+        .block(Block::default().borders(Borders::ALL).title(" Instance "));
+    frame.render_widget(instance, chunks[1]);
+
+    let prompt = Paragraph::new(render_input_line(&app.inject_form.prompt, true)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Message "),
+    );
+    frame.render_widget(prompt, chunks[2]);
+
+    let hint_text = if app.status_msg.is_empty() {
+        "  Delivered between loop iterations"
+    } else {
+        app.status_msg.as_str()
+    };
+    let hint_style = if app.status_msg.is_empty() {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC)
+    } else {
+        Style::default().fg(Color::Yellow)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(hint_text, hint_style))).wrap(Wrap { trim: true }),
+        chunks[3],
+    );
+
+    let bar = Line::from(vec![
+        Span::styled(" Enter", Style::default().fg(Color::Cyan)),
+        Span::raw(" send  "),
+        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::raw(" cancel"),
+    ]);
+    frame.render_widget(Paragraph::new(bar), chunks[5]);
+}
+
 fn render_presets_popup(frame: &mut Frame, app: &App) {
     let area = centered_rect(65, 55, frame.area());
     frame.render_widget(Clear, area);
@@ -393,40 +513,60 @@ fn render_presets_popup(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // title
-            Constraint::Min(3),     // preset list
-            Constraint::Length(4),  // description
-            Constraint::Length(1),  // keybinds
+            Constraint::Length(1), // title
+            Constraint::Min(3),    // preset list
+            Constraint::Length(4), // description
+            Constraint::Length(1), // keybinds
         ])
         .split(area);
 
     let title = Line::from(Span::styled(
         " SKILL PRESETS ",
-        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(Paragraph::new(title), chunks[0]);
 
     // Preset list
-    let rows: Vec<Row> = app.presets.iter().enumerate().map(|(i, p)| {
-        let style = if i == app.preset_selected {
-            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        let prefix = if i == app.preset_selected { "▸ " } else { "  " };
-        Row::new(vec![Cell::from(format!("{}{}", prefix, p.name))]).style(style)
-    }).collect();
+    let rows: Vec<Row> = app
+        .presets
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let style = if i == app.preset_selected {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let prefix = if i == app.preset_selected {
+                "▸ "
+            } else {
+                "  "
+            };
+            Row::new(vec![Cell::from(format!("{}{}", prefix, p.name))]).style(style)
+        })
+        .collect();
 
     let list = Table::new(rows, [Constraint::Percentage(100)])
         .block(Block::default().borders(Borders::ALL).title(" Presets "));
     frame.render_widget(list, chunks[1]);
 
     // Description of selected preset
-    let desc = app.presets.get(app.preset_selected)
+    let desc = app
+        .presets
+        .get(app.preset_selected)
         .map(|p| p.description.as_str())
         .unwrap_or("");
     let description = Paragraph::new(desc)
-        .block(Block::default().borders(Borders::ALL).title(" Description "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Description "),
+        )
         .wrap(Wrap { trim: true });
     frame.render_widget(description, chunks[2]);
 

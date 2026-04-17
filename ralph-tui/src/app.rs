@@ -1,16 +1,15 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Instant;
 
-use crate::ralph::{
-    self, RalphInstance, RalphPreset, SpawnOpts,
-};
+use crate::ralph::{self, RalphInstance, RalphPreset, SpawnOpts};
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum View {
     List,
     Log,
     Launch,
     Restart,
+    Inject,
 }
 
 pub struct TextInput {
@@ -21,11 +20,17 @@ pub struct TextInput {
 impl TextInput {
     pub fn new(text: &str) -> Self {
         let cursor = text.chars().count();
-        Self { text: text.to_string(), cursor }
+        Self {
+            text: text.to_string(),
+            cursor,
+        }
     }
 
     pub fn empty() -> Self {
-        Self { text: String::new(), cursor: 0 }
+        Self {
+            text: String::new(),
+            cursor: 0,
+        }
     }
 
     pub fn set(&mut self, text: &str) {
@@ -44,7 +49,8 @@ impl TextInput {
 
     /// Byte offset of cursor position (for rendering)
     pub fn cursor_byte_offset(&self) -> usize {
-        self.text.char_indices()
+        self.text
+            .char_indices()
             .nth(self.cursor)
             .map(|(i, _)| i)
             .unwrap_or(self.text.len())
@@ -94,13 +100,34 @@ impl TextInput {
     /// Handle a key event. Returns true if consumed.
     pub fn handle_key(&mut self, key: &KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char(c) => { self.insert_char(c); true }
-            KeyCode::Backspace => { self.backspace(); true }
-            KeyCode::Delete => { self.delete(); true }
-            KeyCode::Left => { self.move_left(); true }
-            KeyCode::Right => { self.move_right(); true }
-            KeyCode::Home => { self.move_home(); true }
-            KeyCode::End => { self.move_end(); true }
+            KeyCode::Char(c) => {
+                self.insert_char(c);
+                true
+            }
+            KeyCode::Backspace => {
+                self.backspace();
+                true
+            }
+            KeyCode::Delete => {
+                self.delete();
+                true
+            }
+            KeyCode::Left => {
+                self.move_left();
+                true
+            }
+            KeyCode::Right => {
+                self.move_right();
+                true
+            }
+            KeyCode::Home => {
+                self.move_home();
+                true
+            }
+            KeyCode::End => {
+                self.move_end();
+                true
+            }
             _ => false,
         }
     }
@@ -120,15 +147,22 @@ impl LaunchForm {
             .to_string();
         Self {
             fields: [
-                TextInput::empty(),              // prompt
-                TextInput::new("claude opus"),   // cli + model
-                TextInput::new(&dir),             // dir
-                TextInput::empty(),              // name
-                TextInput::new("0"),             // max_runs
-                TextInput::new("false"),         // marathon
+                TextInput::empty(),            // prompt
+                TextInput::new("claude opus"), // cli + model
+                TextInput::new(&dir),          // dir
+                TextInput::empty(),            // name
+                TextInput::new("0"),           // max_runs
+                TextInput::new("false"),       // marathon
             ],
             focused: 0,
-            labels: ["Prompt", "CLI  Model", "Directory", "Name", "Max runs", "Marathon"],
+            labels: [
+                "Prompt",
+                "CLI  Model",
+                "Directory",
+                "Name",
+                "Max runs",
+                "Marathon",
+            ],
         }
     }
 
@@ -152,6 +186,11 @@ pub struct RestartForm {
     pub max_runs: TextInput,
 }
 
+pub struct InjectForm {
+    pub instance_name: String,
+    pub prompt: TextInput,
+}
+
 pub struct App {
     pub view: View,
     pub instances: Vec<RalphInstance>,
@@ -163,6 +202,8 @@ pub struct App {
     pub log_instance_name: String,
     pub launch_form: LaunchForm,
     pub restart_form: RestartForm,
+    pub inject_form: InjectForm,
+    pub inject_return_view: View,
     pub should_quit: bool,
     pub status_msg: String,
     pub confirm_kill: Option<(String, Instant)>,
@@ -183,7 +224,15 @@ impl App {
             log_file_pos: 0,
             log_instance_name: String::new(),
             launch_form: LaunchForm::new(),
-            restart_form: RestartForm { instance_name: String::new(), max_runs: TextInput::new("0") },
+            restart_form: RestartForm {
+                instance_name: String::new(),
+                max_runs: TextInput::new("0"),
+            },
+            inject_form: InjectForm {
+                instance_name: String::new(),
+                prompt: TextInput::empty(),
+            },
+            inject_return_view: View::List,
             should_quit: false,
             status_msg: String::new(),
             confirm_kill: None,
@@ -210,7 +259,7 @@ impl App {
         match self.view {
             View::List => self.refresh_instances(),
             View::Log => self.refresh_log(),
-            View::Launch | View::Restart => {}
+            View::Launch | View::Restart | View::Inject => {}
         }
         // Expire kill confirmation after 3 seconds
         if let Some((_, when)) = &self.confirm_kill {
@@ -222,7 +271,11 @@ impl App {
     }
 
     fn refresh_log(&mut self) {
-        if let Some(inst) = self.instances.iter().find(|i| i.name == self.log_instance_name) {
+        if let Some(inst) = self
+            .instances
+            .iter()
+            .find(|i| i.name == self.log_instance_name)
+        {
             let path = inst.log_path.clone();
             let (new_lines, new_pos) = ralph::read_log_incremental(&path, self.log_file_pos);
             if !new_lines.is_empty() {
@@ -296,6 +349,55 @@ impl App {
         self.refresh_instances();
     }
 
+    fn open_inject_for(&mut self, name: String, return_view: View) {
+        let Some(inst) = self.instances.iter().find(|i| i.name == name) else {
+            self.status_msg = format!("No ralph named {}", name);
+            return;
+        };
+        if !inst.alive {
+            self.status_msg = format!("{} is not running", inst.name);
+            return;
+        }
+
+        self.inject_form.instance_name = inst.name.clone();
+        self.inject_form.prompt.clear();
+        self.inject_return_view = return_view;
+        self.view = View::Inject;
+        self.status_msg.clear();
+        self.confirm_kill = None;
+    }
+
+    fn open_inject_for_selected(&mut self) {
+        if let Some(inst) = self.selected_instance() {
+            self.open_inject_for(inst.name.clone(), View::List);
+        }
+    }
+
+    fn open_inject_for_log(&mut self) {
+        self.refresh_instances();
+        self.open_inject_for(self.log_instance_name.clone(), View::Log);
+    }
+
+    fn cancel_inject(&mut self) {
+        self.inject_form.prompt.clear();
+        self.view = self.inject_return_view;
+        self.status_msg.clear();
+    }
+
+    fn do_inject(&mut self) {
+        let name = self.inject_form.instance_name.clone();
+        let prompt = self.inject_form.prompt.value().to_string();
+        match ralph::inject_prompt(&name, &prompt) {
+            Ok(msg) => {
+                self.status_msg = msg;
+                self.inject_form.prompt.clear();
+                self.view = self.inject_return_view;
+                self.refresh_instances();
+            }
+            Err(e) => self.status_msg = format!("Error: {}", e),
+        }
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         // Ctrl-C always quits
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -313,6 +415,7 @@ impl App {
             View::Log => self.handle_log_key(key),
             View::Launch => self.handle_launch_key(key),
             View::Restart => self.handle_restart_key(key),
+            View::Inject => self.handle_inject_key(key),
         }
     }
 
@@ -344,6 +447,9 @@ impl App {
                     self.status_msg = format!("Press K again to kill {}", name);
                     self.confirm_kill = Some((name, Instant::now()));
                 }
+            }
+            KeyCode::Char('i') => {
+                self.open_inject_for_selected();
             }
             KeyCode::Char('p') => {
                 if !self.presets.is_empty() {
@@ -391,7 +497,8 @@ impl App {
                 self.status_msg.clear();
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.log_scroll = (self.log_scroll + 1).min(self.log_content.len().saturating_sub(1));
+                self.log_scroll =
+                    (self.log_scroll + 1).min(self.log_content.len().saturating_sub(1));
                 self.log_auto_follow = false;
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -417,8 +524,12 @@ impl App {
                 self.status_msg = format!("Press K again to kill {}", name);
                 self.confirm_kill = Some((name, Instant::now()));
             }
+            KeyCode::Char('i') => {
+                self.open_inject_for_log();
+            }
             KeyCode::PageDown => {
-                self.log_scroll = (self.log_scroll + 20).min(self.log_content.len().saturating_sub(1));
+                self.log_scroll =
+                    (self.log_scroll + 20).min(self.log_content.len().saturating_sub(1));
                 self.log_auto_follow = false;
             }
             KeyCode::PageUp => {
@@ -447,7 +558,11 @@ impl App {
             }
             KeyCode::Char(' ') if focused == 5 => {
                 // Toggle marathon
-                let new_val = if self.launch_form.fields[5].value() == "true" { "false" } else { "true" };
+                let new_val = if self.launch_form.fields[5].value() == "true" {
+                    "false"
+                } else {
+                    "true"
+                };
                 self.launch_form.fields[5].set(new_val);
             }
             _ if focused != 5 => {
@@ -461,7 +576,9 @@ impl App {
         match key.code {
             KeyCode::Esc => self.show_presets = false,
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.preset_selected > 0 { self.preset_selected -= 1; }
+                if self.preset_selected > 0 {
+                    self.preset_selected -= 1;
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.preset_selected + 1 < self.presets.len() {
@@ -473,7 +590,9 @@ impl App {
                     self.launch_form.reset();
                     self.launch_form.fields[0].set(&p.prompt);
                     self.launch_form.fields[1].set(&p.model);
-                    if !p.dir.is_empty() { self.launch_form.fields[2].set(&p.dir); }
+                    if !p.dir.is_empty() {
+                        self.launch_form.fields[2].set(&p.dir);
+                    }
                     self.launch_form.fields[4].set(&p.max_runs.to_string());
                     self.launch_form.fields[5].set(if p.marathon { "true" } else { "false" });
                     self.launch_form.focused = 1; // land on Model so user can Tab → Max runs
@@ -508,12 +627,36 @@ impl App {
                     self.restart_form.max_runs.set("0");
                 }
             }
-            KeyCode::Left => { self.restart_form.max_runs.move_left(); }
-            KeyCode::Right => { self.restart_form.max_runs.move_right(); }
-            KeyCode::Home => { self.restart_form.max_runs.move_home(); }
-            KeyCode::End => { self.restart_form.max_runs.move_end(); }
-            KeyCode::Delete => { self.restart_form.max_runs.delete(); }
+            KeyCode::Left => {
+                self.restart_form.max_runs.move_left();
+            }
+            KeyCode::Right => {
+                self.restart_form.max_runs.move_right();
+            }
+            KeyCode::Home => {
+                self.restart_form.max_runs.move_home();
+            }
+            KeyCode::End => {
+                self.restart_form.max_runs.move_end();
+            }
+            KeyCode::Delete => {
+                self.restart_form.max_runs.delete();
+            }
             _ => {}
+        }
+    }
+
+    fn handle_inject_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.cancel_inject();
+            }
+            KeyCode::Enter => {
+                self.do_inject();
+            }
+            _ => {
+                self.inject_form.prompt.handle_key(&key);
+            }
         }
     }
 

@@ -24,7 +24,7 @@
       "description": "Implement the core signal file protocol in the ralph bash script. Between loop iterations ralph checks ~/.ralph/pids/<name>.signal; if present it reads the content as a mid-run prompt injection, logs it, appends it to the claude conversation, then deletes the file. Scope: ralph bash script only.",
       "type": "short-term",
       "priority": "medium",
-      "status": "todo",
+      "status": "done",
       "tags": [
         "feature",
         "orchestration"
@@ -40,7 +40,7 @@
       "description": "Add a TUI panel (modal or sidebar) that lets the user type a mid-run prompt and writes it to ~/.ralph/pids/<name>.signal for the selected ralph. Touches ralph-tui/src/app.rs (key handler + state), ralph-tui/src/ui.rs (panel render), and ralph-tui/src/ralph.rs (signal_file helper). Depends on TASK-002a for the file protocol.",
       "type": "short-term",
       "priority": "medium",
-      "status": "todo",
+      "status": "done",
       "tags": [
         "feature",
         "orchestration",
@@ -61,7 +61,7 @@
       "description": "Add a form or button in the SvelteKit dashboard that posts a prompt string to a new server action, which writes it to ~/.ralph/pids/<name>.signal. Touches dashboard/src/lib/server/ralph.ts (writeSignal function + endpoint) and dashboard/src/routes/+page.svelte (UI). Depends on TASK-002a for the file protocol.",
       "type": "short-term",
       "priority": "medium",
-      "status": "todo",
+      "status": "done",
       "tags": [
         "feature",
         "orchestration",
@@ -291,6 +291,38 @@
       "depends_on": [
         "TASK-006a"
       ]
+    },
+    {
+      "title": "CLI prompt injection command",
+      "status": "todo",
+      "priority": "low",
+      "depends_on": [
+        "TASK-002a"
+      ],
+      "id": "TASK-002d",
+      "description": "Add a small ralph-status inject <name> command that writes plaintext to ~/.ralph/pids/<name>.signal for the backend signal protocol. Keep scope to the CLI fallback path and avoid changing TUI/dashboard injection flows.",
+      "type": "short-term"
+    },
+    {
+      "title": "TUI pending injection indicator",
+      "status": "todo",
+      "priority": "low",
+      "depends_on": [
+        "TASK-002b"
+      ],
+      "id": "TASK-002e",
+      "description": "Show when a selected running instance already has a pending .signal prompt so users know an injection is queued before the next loop iteration.",
+      "type": "task"
+    },
+    {
+      "title": "Dashboard pending injection indicator",
+      "status": "todo",
+      "priority": "low",
+      "depends_on": [
+        "TASK-002c"
+      ],
+      "id": "TASK-002f",
+      "description": "Show when a selected dashboard instance already has a queued .signal prompt so users know to wait for ralph to consume it before sending another injection."
     }
   ]
 }

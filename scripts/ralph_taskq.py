@@ -713,6 +713,14 @@ def next_task(board: Board) -> tuple[Task | None, list[dict[str, Any]], int, int
     return (ready[0] if ready else None), queue, blocked_todo_count, len(ready)
 
 
+def status_counts(board: Board) -> dict[str, int]:
+    counts = {"total": len(board.tasks), "todo": 0, "in_progress": 0, "done": 0, "blocked": 0, "other": 0}
+    for task in board.tasks:
+        key = task.status if task.status in {"todo", "in_progress", "done", "blocked"} else "other"
+        counts[key] += 1
+    return counts
+
+
 def chain_view(board: Board, task: Task) -> dict[str, Any]:
     if task.id:
         m = re.match(r"^([A-Za-z0-9_.-]*-\d+)[A-Za-z]?$", task.id)
@@ -881,6 +889,18 @@ def command_next(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_stats(args: argparse.Namespace) -> dict[str, Any]:
+    board_path = discover_board(Path.cwd(), args.board)
+    board = load_board(board_path)
+    _, _, blocked_count, ready_count = next_task(board)
+    return {
+        "board": board.meta(),
+        "counts": status_counts(board),
+        "ready_count": ready_count,
+        "blocked_todo_count": blocked_count,
+    }
+
+
 def command_task(args: argparse.Namespace) -> dict[str, Any]:
     board_path = discover_board(Path.cwd(), args.board)
     board = load_board(board_path)
@@ -1038,6 +1058,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_next = subparsers.add_parser("next", help="Select the next actionable task")
     p_next.add_argument("--board", help="Explicit board file path")
     p_next.set_defaults(handler=command_next)
+
+    p_stats = subparsers.add_parser("stats", help="Show aggregate task-board counts")
+    p_stats.add_argument("--board", help="Explicit board file path")
+    p_stats.set_defaults(handler=command_stats)
 
     p_task = subparsers.add_parser("task", help="Show full context for a specific task ref")
     p_task.add_argument("task_ref", help="Task ID or locator ref")
