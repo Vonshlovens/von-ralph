@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use serde_json;
 
 #[derive(Clone, Debug)]
 pub struct RalphInstance {
@@ -19,6 +20,63 @@ pub struct RalphInstance {
     pub alive: bool,
     pub log_path: PathBuf,
     pub has_log: bool,
+}
+
+#[derive(Clone)]
+pub struct RalphPreset {
+    pub name: String,
+    pub description: String,
+    pub prompt: String,
+    pub model: String,
+    pub dir: String,
+    pub max_runs: u32,
+    pub marathon: bool,
+}
+
+pub fn load_presets() -> Vec<RalphPreset> {
+    let dir = find_presets_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return vec![];
+    };
+    let mut presets = Vec::new();
+    let mut paths: Vec<_> = entries
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    for path in paths {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                let str_field = |key: &str| v[key].as_str().unwrap_or("").to_string();
+                presets.push(RalphPreset {
+                    name: str_field("name"),
+                    description: str_field("description"),
+                    prompt: str_field("prompt"),
+                    model: str_field("model"),
+                    dir: str_field("dir"),
+                    max_runs: v["max_runs"].as_u64().unwrap_or(0) as u32,
+                    marathon: v["marathon"].as_bool().unwrap_or(false),
+                });
+            }
+        }
+    }
+    presets
+}
+
+fn find_presets_dir() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let candidate = exe
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("../../../presets");
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".ralph/presets")
 }
 
 pub struct SpawnOpts {
@@ -234,14 +292,14 @@ pub fn ralph_bin_path() -> PathBuf {
         let candidate = exe
             .parent()
             .unwrap_or(Path::new("."))
-            .join("../../ralph");
+            .join("../../../ralph");
         if candidate.exists() {
             return candidate;
         }
     }
     dirs::home_dir()
         .unwrap_or_default()
-        .join("von-ralph/ralph")
+        .join("projects/von-ralph/ralph")
 }
 
 pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {

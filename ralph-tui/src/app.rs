@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Instant;
 
 use crate::ralph::{
-    self, RalphInstance, SpawnOpts,
+    self, RalphInstance, RalphPreset, SpawnOpts,
 };
 
 #[derive(PartialEq)]
@@ -166,6 +166,9 @@ pub struct App {
     pub should_quit: bool,
     pub status_msg: String,
     pub confirm_kill: Option<(String, Instant)>,
+    pub presets: Vec<RalphPreset>,
+    pub preset_selected: usize,
+    pub show_presets: bool,
 }
 
 impl App {
@@ -184,6 +187,9 @@ impl App {
             should_quit: false,
             status_msg: String::new(),
             confirm_kill: None,
+            presets: ralph::load_presets(),
+            preset_selected: 0,
+            show_presets: false,
         };
         app.refresh_instances();
         app
@@ -293,6 +299,11 @@ impl App {
             return;
         }
 
+        if self.show_presets {
+            self.handle_presets_key(key);
+            return;
+        }
+
         match self.view {
             View::List => self.handle_list_key(key),
             View::Log => self.handle_log_key(key),
@@ -328,6 +339,14 @@ impl App {
                     }
                     self.status_msg = format!("Press K again to kill {}", name);
                     self.confirm_kill = Some((name, Instant::now()));
+                }
+            }
+            KeyCode::Char('p') => {
+                if !self.presets.is_empty() {
+                    self.preset_selected = 0;
+                    self.show_presets = true;
+                    self.status_msg.clear();
+                    self.confirm_kill = None;
                 }
             }
             KeyCode::Char('n') => {
@@ -429,6 +448,35 @@ impl App {
             }
             _ if focused != 5 => {
                 self.launch_form.fields[focused].handle_key(&key);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_presets_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.show_presets = false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.preset_selected > 0 { self.preset_selected -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.preset_selected + 1 < self.presets.len() {
+                    self.preset_selected += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(p) = self.presets.get(self.preset_selected).cloned() {
+                    self.launch_form.reset();
+                    self.launch_form.fields[0].set(&p.prompt);
+                    self.launch_form.fields[1].set(&p.model);
+                    self.launch_form.fields[2].set(&p.dir);
+                    self.launch_form.fields[4].set(&p.max_runs.to_string());
+                    self.launch_form.fields[5].set(if p.marathon { "true" } else { "false" });
+                    self.launch_form.focused = 1; // land on Model so user can Tab → Max runs
+                    self.show_presets = false;
+                    self.view = View::Launch;
+                    self.status_msg.clear();
+                }
             }
             _ => {}
         }

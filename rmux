@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUI_DIR="$SCRIPT_DIR/ralph-tui"
+BINARY="$TUI_DIR/target/release/ralph-tui"
+
+# Rebuild in background if source is newer than binary
+needs_rebuild() {
+    [[ ! -f "$BINARY" ]] && return 0
+    find "$TUI_DIR/src" -name "*.rs" -newer "$BINARY" | grep -q . 2>/dev/null
+}
+
+if needs_rebuild; then
+    echo "Building ralph-tui..." >&2
+    cargo build --release --manifest-path "$TUI_DIR/Cargo.toml"
+fi
+
+exec "$BINARY" "$@"

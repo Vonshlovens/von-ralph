@@ -44,6 +44,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_restart(frame, app);
         }
     }
+    if app.show_presets {
+        render_presets_popup(frame, app);
+    }
 }
 
 fn render_list(frame: &mut Frame, app: &mut App) {
@@ -154,6 +157,8 @@ fn render_list(frame: &mut Frame, app: &mut App) {
             Span::raw(" log  "),
             Span::styled("K", Style::default().fg(Color::Cyan)),
             Span::raw(" kill  "),
+            Span::styled("p", Style::default().fg(Color::Cyan)),
+            Span::raw(" presets  "),
             Span::styled("n", Style::default().fg(Color::Cyan)),
             Span::raw(" new  "),
             Span::styled("R", Style::default().fg(Color::Cyan)),
@@ -368,6 +373,62 @@ fn render_restart(frame: &mut Frame, app: &mut App) {
         Span::raw(" cancel"),
     ]);
     frame.render_widget(Paragraph::new(bar), chunks[4]);
+}
+
+fn render_presets_popup(frame: &mut Frame, app: &App) {
+    let area = centered_rect(65, 55, frame.area());
+    frame.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),  // title
+            Constraint::Min(3),     // preset list
+            Constraint::Length(4),  // description
+            Constraint::Length(1),  // keybinds
+        ])
+        .split(area);
+
+    let title = Line::from(Span::styled(
+        " SKILL PRESETS ",
+        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(title), chunks[0]);
+
+    // Preset list
+    let rows: Vec<Row> = app.presets.iter().enumerate().map(|(i, p)| {
+        let style = if i == app.preset_selected {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let prefix = if i == app.preset_selected { "▸ " } else { "  " };
+        Row::new(vec![Cell::from(format!("{}{}", prefix, p.name))]).style(style)
+    }).collect();
+
+    let list = Table::new(rows, [Constraint::Percentage(100)])
+        .block(Block::default().borders(Borders::ALL).title(" Presets "));
+    frame.render_widget(list, chunks[1]);
+
+    // Description of selected preset
+    let desc = app.presets.get(app.preset_selected)
+        .map(|p| p.description.as_str())
+        .unwrap_or("");
+    let description = Paragraph::new(desc)
+        .block(Block::default().borders(Borders::ALL).title(" Description "))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(description, chunks[2]);
+
+    // Keybind bar
+    let bar = Line::from(vec![
+        Span::styled(" j/k", Style::default().fg(Color::Cyan)),
+        Span::raw(" select  "),
+        Span::styled("Enter", Style::default().fg(Color::Cyan)),
+        Span::raw(" load  "),
+        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::raw(" cancel"),
+    ]);
+    frame.render_widget(Paragraph::new(bar), chunks[3]);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
