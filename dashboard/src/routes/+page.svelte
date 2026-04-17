@@ -21,6 +21,9 @@
 	let logContent = $state('');
 	let logLoading = $state(false);
 	let showSpawnForm = $state(false);
+	let showInjectForm = $state(false);
+	let statusMessage = $state('');
+	let statusError = $state('');
 	let pollTimer: ReturnType<typeof setInterval>;
 	let logTimer: ReturnType<typeof setInterval>;
 
@@ -32,6 +35,10 @@
 	let spawnModel = $state('opus');
 	let spawnMarathon = $state(false);
 	let spawning = $state(false);
+
+	let injectName = $state('');
+	let injectPrompt = $state('');
+	let injecting = $state(false);
 
 	async function fetchInstances() {
 		try {
@@ -116,6 +123,49 @@
 		}
 	}
 
+	function openInjectForm(name: string) {
+		injectName = name;
+		injectPrompt = '';
+		statusMessage = '';
+		statusError = '';
+		showInjectForm = true;
+	}
+
+	function closeInjectForm() {
+		showInjectForm = false;
+		injectPrompt = '';
+	}
+
+	async function injectIntoRalph() {
+		statusMessage = '';
+		statusError = '';
+
+		if (!injectPrompt.trim()) {
+			statusError = 'prompt injection cannot be empty';
+			return;
+		}
+
+		injecting = true;
+		try {
+			const res = await fetch('/api/inject', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name: injectName, prompt: injectPrompt })
+			});
+			const data = await res.json();
+			if (!res.ok || !data.success) {
+				statusError = data.message || 'failed to queue prompt injection';
+				return;
+			}
+			statusMessage = data.message;
+			closeInjectForm();
+		} catch {
+			statusError = 'failed to queue prompt injection';
+		} finally {
+			injecting = false;
+		}
+	}
+
 	function formatSize(bytes: number): string {
 		if (bytes < 1024) return `${bytes}B`;
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`;
@@ -187,6 +237,12 @@
 			</button>
 		{/if}
 	</div>
+
+	{#if statusMessage || statusError}
+		<div class="border-b border-border px-6 py-2 text-xs {statusError ? 'text-red bg-red/10' : 'text-green bg-green/10'}">
+			{statusError || statusMessage}
+		</div>
+	{/if}
 
 	<!-- Spawn form -->
 	{#if showSpawnForm}
@@ -260,6 +316,38 @@
 		</div>
 	{/if}
 
+	{#if showInjectForm}
+		<div class="border-b border-border px-6 py-4 bg-surface">
+			<div class="max-w-4xl">
+				<div class="flex items-center gap-3 mb-2">
+					<div class="text-sm font-medium text-text">inject into {injectName}</div>
+					<div class="flex-1"></div>
+					<button
+						class="px-2 py-0.5 text-xs rounded bg-bg hover:bg-surface-hover text-text-muted border border-border transition-colors"
+						onclick={closeInjectForm}
+					>
+						cancel
+					</button>
+				</div>
+				<label class="block text-xs text-text-muted mb-2">prompt for next loop
+					<textarea
+						bind:value={injectPrompt}
+						class="w-full bg-bg border border-border rounded px-3 py-2 text-sm text-text resize-none focus:outline-none focus:border-accent"
+						rows="3"
+						placeholder="Check current status and adjust course..."
+					></textarea>
+				</label>
+				<button
+					class="px-4 py-1.5 text-sm rounded bg-accent hover:bg-accent-hover text-white transition-colors disabled:opacity-50"
+					onclick={injectIntoRalph}
+					disabled={injecting}
+				>
+					{injecting ? 'queueing...' : 'queue injection'}
+				</button>
+			</div>
+		</div>
+	{/if}
+
 	<div class="flex flex-1 min-h-0">
 		<!-- Instance list -->
 		<div class="w-96 border-r border-border overflow-y-auto shrink-0">
@@ -311,6 +399,12 @@
 						<span class="text-xs text-text-dim">refreshing...</span>
 					{/if}
 					{#if selectedInstance?.alive}
+						<button
+							class="px-2 py-0.5 text-xs rounded bg-accent hover:bg-accent-hover text-white transition-colors"
+							onclick={() => openInjectForm(selectedName!)}
+						>
+							inject
+						</button>
 						<button
 							class="px-2 py-0.5 text-xs rounded bg-red/10 hover:bg-red/20 text-red border border-red/20 transition-colors"
 							onclick={() => killRalph(selectedName!)}

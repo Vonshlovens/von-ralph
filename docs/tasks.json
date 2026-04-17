@@ -6,8 +6,12 @@
       "description": "Replace hardcoded absolute paths to the ralph binary with a config discovery layer: check $RALPH_BIN env var first, then PATH lookup, then relative-to-binary fallback. Affects dashboard server (const RALPH_BIN in ralph.ts) and Rust TUI spawn calls in ralph.rs. Small scoped change across 2 files.",
       "type": "short-term",
       "priority": "high",
-      "status": "todo",
-      "tags": ["bug", "portability", "config"],
+      "status": "done",
+      "tags": [
+        "bug",
+        "portability",
+        "config"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "ralph-tui/src/ralph.rs"
@@ -20,8 +24,11 @@
       "description": "Implement the core signal file protocol in the ralph bash script. Between loop iterations ralph checks ~/.ralph/pids/<name>.signal; if present it reads the content as a mid-run prompt injection, logs it, appends it to the claude conversation, then deletes the file. Scope: ralph bash script only.",
       "type": "short-term",
       "priority": "medium",
-      "status": "todo",
-      "tags": ["feature", "orchestration"],
+      "status": "done",
+      "tags": [
+        "feature",
+        "orchestration"
+      ],
       "files": [
         "ralph"
       ],
@@ -33,14 +40,20 @@
       "description": "Add a TUI panel (modal or sidebar) that lets the user type a mid-run prompt and writes it to ~/.ralph/pids/<name>.signal for the selected ralph. Touches ralph-tui/src/app.rs (key handler + state), ralph-tui/src/ui.rs (panel render), and ralph-tui/src/ralph.rs (signal_file helper). Depends on TASK-002a for the file protocol.",
       "type": "short-term",
       "priority": "medium",
-      "status": "todo",
-      "tags": ["feature", "orchestration", "ux"],
+      "status": "done",
+      "tags": [
+        "feature",
+        "orchestration",
+        "ux"
+      ],
       "files": [
         "ralph-tui/src/app.rs",
         "ralph-tui/src/ui.rs",
         "ralph-tui/src/ralph.rs"
       ],
-      "depends_on": ["TASK-002a"]
+      "depends_on": [
+        "TASK-002a"
+      ]
     },
     {
       "id": "TASK-002c",
@@ -48,13 +61,19 @@
       "description": "Add a form or button in the SvelteKit dashboard that posts a prompt string to a new server action, which writes it to ~/.ralph/pids/<name>.signal. Touches dashboard/src/lib/server/ralph.ts (writeSignal function + endpoint) and dashboard/src/routes/+page.svelte (UI). Depends on TASK-002a for the file protocol.",
       "type": "short-term",
       "priority": "medium",
-      "status": "todo",
-      "tags": ["feature", "orchestration", "ux"],
+      "status": "done",
+      "tags": [
+        "feature",
+        "orchestration",
+        "ux"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "dashboard/src/routes/+page.svelte"
       ],
-      "depends_on": ["TASK-002a"]
+      "depends_on": [
+        "TASK-002a"
+      ]
     },
     {
       "id": "TASK-003a",
@@ -63,7 +82,11 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability", "logging"],
+      "tags": [
+        "feature",
+        "observability",
+        "logging"
+      ],
       "files": [
         "ralph",
         "ralph-status"
@@ -77,12 +100,17 @@
       "type": "short-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability"],
+      "tags": [
+        "feature",
+        "observability"
+      ],
       "files": [
         "ralph-tui/src/ralph.rs",
         "ralph-tui/src/ui.rs"
       ],
-      "depends_on": ["TASK-003a"]
+      "depends_on": [
+        "TASK-003a"
+      ]
     },
     {
       "id": "TASK-004a",
@@ -90,12 +118,18 @@
       "description": "Add an --isolated flag to the ralph bash script. When set: before spawning, create a git worktree in a temp dir (git worktree add /tmp/ralph-<name>-<ts> -b ralph/<name>), cd into it, run the agent there, and on exit optionally push the branch and open a PR via gh. Cleanup the worktree after PR is opened or on --no-pr. Scope: ralph bash script only.",
       "type": "long-term",
       "priority": "high",
-      "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
+      "status": "in_progress",
+      "tags": [
+        "feature",
+        "orchestration",
+        "git"
+      ],
       "files": [
         "ralph"
       ],
-      "depends_on": ["TASK-001"]
+      "depends_on": [
+        "TASK-001"
+      ]
     },
     {
       "id": "TASK-004b",
@@ -104,12 +138,18 @@
       "type": "long-term",
       "priority": "high",
       "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "git"
+      ],
       "files": [
         "ralph-tui/src/ralph.rs",
         "ralph-tui/src/ui.rs"
       ],
-      "depends_on": ["TASK-004a"]
+      "depends_on": [
+        "TASK-004a"
+      ]
     },
     {
       "id": "TASK-004c",
@@ -118,12 +158,18 @@
       "type": "long-term",
       "priority": "high",
       "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "git"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "dashboard/src/routes/+page.svelte"
       ],
-      "depends_on": ["TASK-004a"]
+      "depends_on": [
+        "TASK-004a"
+      ]
     },
     {
       "id": "TASK-005a",
@@ -132,11 +178,18 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-pipeline"
       ],
-      "depends_on": ["TASK-002a", "TASK-004a"]
+      "depends_on": [
+        "TASK-002a",
+        "TASK-004a"
+      ]
     },
     {
       "id": "TASK-005b",
@@ -145,11 +198,17 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-pipeline"
       ],
-      "depends_on": ["TASK-005a"]
+      "depends_on": [
+        "TASK-005a"
+      ]
     },
     {
       "id": "TASK-005c",
@@ -158,11 +217,18 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-pipeline"
       ],
-      "depends_on": ["TASK-005b", "TASK-002a"]
+      "depends_on": [
+        "TASK-005b",
+        "TASK-002a"
+      ]
     },
     {
       "id": "TASK-005d",
@@ -171,13 +237,19 @@
       "type": "long-term",
       "priority": "low",
       "status": "todo",
-      "tags": ["feature", "orchestration", "pipeline"],
+      "tags": [
+        "feature",
+        "orchestration",
+        "pipeline"
+      ],
       "files": [
         "ralph-tui/src/app.rs",
         "ralph-tui/src/ui.rs",
         "dashboard/src/routes/+page.svelte"
       ],
-      "depends_on": ["TASK-005b"]
+      "depends_on": [
+        "TASK-005b"
+      ]
     },
     {
       "id": "TASK-006a",
@@ -186,12 +258,19 @@
       "type": "long-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability", "dashboard", "analytics"],
+      "tags": [
+        "feature",
+        "observability",
+        "dashboard",
+        "analytics"
+      ],
       "files": [
         "dashboard/src/lib/server/ralph.ts",
         "dashboard/src/routes/analytics/+page.server.ts"
       ],
-      "depends_on": ["TASK-003a"]
+      "depends_on": [
+        "TASK-003a"
+      ]
     },
     {
       "id": "TASK-006b",
@@ -200,11 +279,125 @@
       "type": "long-term",
       "priority": "medium",
       "status": "todo",
-      "tags": ["feature", "observability", "dashboard", "analytics"],
+      "tags": [
+        "feature",
+        "observability",
+        "dashboard",
+        "analytics"
+      ],
       "files": [
         "dashboard/src/routes/analytics/+page.svelte"
       ],
-      "depends_on": ["TASK-006a"]
+      "depends_on": [
+        "TASK-006a"
+      ]
+    },
+    {
+      "title": "CLI prompt injection command",
+      "status": "todo",
+      "priority": "low",
+      "depends_on": [
+        "TASK-002a"
+      ],
+      "id": "TASK-002d",
+      "description": "Add a small ralph-status inject <name> command that writes plaintext to ~/.ralph/pids/<name>.signal for the backend signal protocol. Keep scope to the CLI fallback path and avoid changing TUI/dashboard injection flows.",
+      "type": "short-term"
+    },
+    {
+      "title": "TUI pending injection indicator",
+      "status": "todo",
+      "priority": "low",
+      "depends_on": [
+        "TASK-002b"
+      ],
+      "id": "TASK-002e",
+      "description": "Show when a selected running instance already has a pending .signal prompt so users know an injection is queued before the next loop iteration.",
+      "type": "task"
+    },
+    {
+      "title": "Dashboard pending injection indicator",
+      "status": "todo",
+      "priority": "low",
+      "depends_on": [
+        "TASK-002c"
+      ],
+      "id": "TASK-002f",
+      "description": "Show when a selected dashboard instance already has a queued .signal prompt so users know to wait for ralph to consume it before sending another injection."
+    },
+    {
+      "title": "Native PTY runtime for embedded TUI terminal",
+      "status": "done",
+      "priority": "medium",
+      "depends_on": [],
+      "id": "TASK-007a",
+      "description": "Add a focused PTY runtime for ralph-tui native terminal popup: spawn shell in selected cwd, non-blocking read/write, resize, and clean shutdown. Use portable-pty + vt100 with a small adapter API consumable by app/ui layers. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
+    },
+    {
+      "title": "App state and key routing for native terminal popup",
+      "status": "done",
+      "priority": "medium",
+      "depends_on": [
+        "TASK-007a"
+      ],
+      "id": "TASK-007b",
+      "description": "Integrate native terminal lifecycle into app state and event handling. Repurpose keybinding T to open native popup from list/log context, route input to terminal while active, and reserve Ctrl-G as escape back to prior view. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
+    },
+    {
+      "title": "Render native embedded terminal popup in ratatui",
+      "status": "done",
+      "priority": "medium",
+      "depends_on": [
+        "TASK-007b"
+      ],
+      "id": "TASK-007c",
+      "description": "Implement popup rendering for the native embedded terminal using terminal screen snapshot output, with compact status/hint line and dynamic size-to-PTY resize propagation. Preserve current left-right base view under overlay. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
+    },
+    {
+      "title": "Native terminal docs and regression coverage",
+      "status": "done",
+      "priority": "low",
+      "depends_on": [
+        "TASK-007c"
+      ],
+      "id": "TASK-007d",
+      "description": "Add targeted regression coverage for popup lifecycle/key routing (including Ctrl-G escape) and update user-facing keybinding docs so T is native popup and t remains tmux split. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
+    },
+    {
+      "title": "Profile native terminal input latency",
+      "status": "todo",
+      "priority": "medium",
+      "depends_on": [
+        "TASK-007c"
+      ],
+      "id": "TASK-007e",
+      "description": "Investigate typing latency in the native terminal popup (non-tmux path). Add lightweight timing instrumentation for key-to-render and PTY drain-to-render intervals, capture baseline numbers, and identify top hotspots. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
+    },
+    {
+      "title": "Optimize native terminal typing/render latency",
+      "status": "todo",
+      "priority": "medium",
+      "depends_on": [
+        "TASK-007e"
+      ],
+      "id": "TASK-007f",
+      "description": "Implement latency fixes for native terminal mode based on profiling: reduce per-frame allocation churn, make PTY output application incremental, and tune redraw/tick behavior for faster key echo while preserving CPU headroom. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
+    },
+    {
+      "title": "Dock native terminal on right side of TUI",
+      "status": "todo",
+      "priority": "medium",
+      "depends_on": [
+        "TASK-007f"
+      ],
+      "id": "TASK-007g",
+      "description": "Add a right-docked native terminal layout mode so the shell appears as a persistent pane on the right side of the TUI instead of popup-only. Include pane width policy and close/return key behavior consistent with current key model. Keep scope small for one agent (~70% context): <=3 files and <=250 net LOC.",
+      "type": "short-term"
     }
   ]
 }

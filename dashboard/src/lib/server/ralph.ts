@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { exec, spawn } from 'node:child_process';
@@ -9,7 +9,15 @@ const execAsync = promisify(exec);
 const RALPH_DIR = join(homedir(), '.ralph');
 const PID_DIR = join(RALPH_DIR, 'pids');
 const LOG_DIR = join(RALPH_DIR, 'logs');
-const RALPH_BIN = join(homedir(), 'von-ralph', 'ralph');
+async function findRalphBin(): Promise<string> {
+	if (process.env.RALPH_BIN) return process.env.RALPH_BIN;
+	try {
+		const { stdout } = await execAsync('which ralph');
+		const p = stdout.trim();
+		if (p) return p;
+	} catch { /* not in PATH */ }
+	return 'ralph';
+}
 
 export interface RalphInstance {
 	name: string;
@@ -49,6 +57,10 @@ async function isProcessAlive(pid: number): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+function signalPath(name: string): string {
+	return join(PID_DIR, `${name}.signal`);
 }
 
 function parseMeta(content: string): Record<string, string> {
@@ -224,6 +236,7 @@ async function cleanMeta(name: string) {
 	const { unlink } = await import('node:fs/promises');
 	try { await unlink(join(PID_DIR, `${name}.meta`)); } catch { /* ok */ }
 	try { await unlink(join(PID_DIR, `${name}.pid`)); } catch { /* ok */ }
+	try { await unlink(signalPath(name)); } catch { /* ok */ }
 }
 
 export async function cleanDead(): Promise<string[]> {
@@ -240,6 +253,43 @@ export async function cleanDead(): Promise<string[]> {
 	return cleaned;
 }
 
+export async function injectPrompt(name: string, prompt: string): Promise<{ success: boolean; message: string }> {
+	const instanceName = name.trim();
+	const message = prompt.trim();
+
+	if (!instanceName) {
+		return { success: false, message: 'instance name cannot be empty' };
+	}
+	if (!message) {
+		return { success: false, message: 'prompt injection cannot be empty' };
+	}
+
+	const metaFile = join(PID_DIR, `${instanceName}.meta`);
+	if (!(await fileExists(metaFile))) {
+		return { success: false, message: `No ralph named '${instanceName}' found` };
+	}
+
+	const content = await readFile(metaFile, 'utf-8');
+	const meta = parseMeta(content);
+	const pid = parseInt(meta.pid || '0');
+	if (!(await isProcessAlive(pid))) {
+		return { success: false, message: `${instanceName} is not running` };
+	}
+
+	try {
+		await writeFile(signalPath(instanceName), message, { flag: 'wx' });
+		return { success: true, message: `Queued prompt injection for ${instanceName}` };
+	} catch (err) {
+		if (err && typeof err === 'object' && 'code' in err && err.code === 'EEXIST') {
+			return {
+				success: false,
+				message: 'prompt injection already queued; wait for ralph to consume it'
+			};
+		}
+		throw err;
+	}
+}
+
 export interface SpawnOptions {
 	prompt?: string;
 	maxRuns?: number;
@@ -249,7 +299,8 @@ export interface SpawnOptions {
 	marathon?: boolean;
 }
 
-export function spawnRalph(opts: SpawnOptions): { name: string; pid: number } {
+export async function spawnRalph(opts: SpawnOptions): Promise<{ name: string; pid: number }> {
+	const RALPH_BIN = await findRalphBin();
 	const args: string[] = [];
 
 	if (opts.prompt) {

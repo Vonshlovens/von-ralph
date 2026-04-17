@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -o pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF_RALPH="$SCRIPT_DIR/$(basename "$0")"
+if [[ -x "$SELF_RALPH" ]]; then
+  export RALPH_BIN="${RALPH_BIN:-$SELF_RALPH}"
+fi
+
+if [[ "${1:-}" == "taskq" ]]; then
+  shift
+  if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required for 'ralph taskq'"
+    exit 1
+  fi
+  exec python3 "$SCRIPT_DIR/scripts/ralph_taskq.py" "$@"
+fi
+
 if ! command -v jq &>/dev/null; then
   echo "Error: jq is not installed. Install it with: sudo apt install jq"
   exit 1
@@ -25,6 +40,7 @@ When you are done, ensure you have added at least one (1) new todo to the kanban
 usage() {
   cat <<'USAGE'
 Usage: ralph [prompt] [max_runs] [options]
+       ralph taskq <subcommand> [args]
 
 Arguments:
   prompt       The prompt to send each loop (default: built-in /tackle prompt)
@@ -34,15 +50,25 @@ Options:
   -d, --dir <path>     Working directory (default: current dir)
   -m, --model <model>  Model to use (default: opus)
   -n, --name <name>    Name this ralph instance (default: auto-generated)
+  --cli <harness>       CLI harness: claude|codex|gemini|opencode (default: claude)
+  --enforce-taskq-cycle Require each run to produce taskq progress: >=1 done + >=1 added
+  --no-enforce-taskq-cycle Disable taskq cycle guard even when auto-detected
   --marathon            Enable rate-limit detection with 30min sleep
   --no-log              Disable log files (output to terminal only)
   -h, --help            Show this help
+
+Task board:
+  taskq                 Cross-repo task board query/update utility
 
 Examples:
   ralph 10                                          # 10 runs with default prompt
   ralph "See AGENT_PROMPT.md" 10                    # Custom prompt, 10 runs
   ralph "Fix all lint errors" -d ~/my-project -n lint-fixer
   ralph --marathon                                  # Infinite with rate-limit recovery
+  ralph --enforce-taskq-cycle                       # Fail run if no done+add-task progress
+  ralph taskq next                                  # Pick next actionable task
+  ralph taskq task TASK-004a                        # Show task details
+  ralph taskq set-status TASK-004a in_progress      # Update task status
 USAGE
   exit 0
 }
@@ -52,16 +78,21 @@ PROMPT=""
 MAX_RUNS=0
 WORK_DIR=""
 MODEL="opus"
+CLI_BIN="claude"
 RALPH_NAME=""
 MARATHON=false
 NO_LOG=false
+ENFORCE_TASKQ_CYCLE="${RALPH_ENFORCE_TASKQ_CYCLE:-auto}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage ;;
     -d|--dir) WORK_DIR="$2"; shift 2 ;;
     -m|--model) MODEL="$2"; shift 2 ;;
+    --cli) CLI_BIN="$2"; shift 2 ;;
     -n|--name) RALPH_NAME="$2"; shift 2 ;;
+    --enforce-taskq-cycle) ENFORCE_TASKQ_CYCLE=true; shift ;;
+    --no-enforce-taskq-cycle) ENFORCE_TASKQ_CYCLE=false; shift ;;
     --marathon) MARATHON=true; shift ;;
     --no-log) NO_LOG=true; shift ;;
     -*)
@@ -86,10 +117,52 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Normalize common Codex model aliases to canonical names.
+if [[ "$CLI_BIN" == "codex" ]]; then
+  MODEL_LOWER="$(printf '%s' "$MODEL" | tr '[:upper:]' '[:lower:]')"
+  case "$MODEL_LOWER" in
+    "gpt 5.4"|"gpt5.4")
+      MODEL="gpt-5.4"
+      ;;
+    "gpt 5.3"|"gpt5.3")
+      MODEL="gpt-5.3"
+      ;;
+    "gpt 4.1"|"gpt4.1")
+      MODEL="gpt-4.1"
+      ;;
+    "o4 mini"|"o4mini")
+      MODEL="o4-mini"
+      ;;
+  esac
+fi
+
 # Use default prompt if none provided
 if [ -z "$PROMPT" ]; then
   PROMPT="$DEFAULT_PROMPT"
 fi
+
+ENFORCE_TASKQ_CYCLE="$(printf '%s' "$ENFORCE_TASKQ_CYCLE" | tr '[:upper:]' '[:lower:]')"
+case "$ENFORCE_TASKQ_CYCLE" in
+  true|1|yes|on)
+    ENFORCE_TASKQ_CYCLE=true
+    ;;
+  false|0|no|off)
+    ENFORCE_TASKQ_CYCLE=false
+    ;;
+  auto|"")
+    # Auto-enable for taskq-driven worker prompts that explicitly include set-status + add-task.
+    if [[ "$PROMPT" == *"set-status"* && "$PROMPT" == *"add-task"* ]] \
+      && ([[ "$PROMPT" == *"taskq"* ]] || [[ "$PROMPT" == *"<TASKQ>"* ]]); then
+      ENFORCE_TASKQ_CYCLE=true
+    else
+      ENFORCE_TASKQ_CYCLE=false
+    fi
+    ;;
+  *)
+    echo "Error: invalid taskq cycle guard mode '$ENFORCE_TASKQ_CYCLE' (expected true|false|auto)"
+    exit 1
+    ;;
+esac
 
 # --- Setup ---
 RALPH_DIR="$HOME/.ralph"
@@ -104,6 +177,7 @@ fi
 LOG_FILE="$LOG_DIR/${RALPH_NAME}.log"
 PID_FILE="$PID_DIR/${RALPH_NAME}.pid"
 META_FILE="$PID_DIR/${RALPH_NAME}.meta"
+SIGNAL_FILE="$PID_DIR/${RALPH_NAME}.signal"
 RATE_LIMIT_SLEEP=1800
 
 # Write PID file
@@ -117,8 +191,10 @@ prompt=$PROMPT
 max_runs=$MAX_RUNS
 current_run=0
 model=$MODEL
+cli=$CLI_BIN
 work_dir=${WORK_DIR:-$(pwd)}
 marathon=$MARATHON
+enforce_taskq_cycle=$ENFORCE_TASKQ_CYCLE
 started=$(date -Iseconds)
 EOF
 
@@ -129,6 +205,38 @@ log() {
   else
     echo "$msg"
   fi
+}
+
+taskq_stats() {
+  python3 "$SCRIPT_DIR/scripts/ralph_taskq.py" stats
+}
+
+read_signal_prompt() {
+  [ -f "$SIGNAL_FILE" ] || return 0
+
+  local injected_prompt
+  if ! injected_prompt="$(cat "$SIGNAL_FILE" 2>/dev/null)"; then
+    log "⚠️  Failed to read signal file: $SIGNAL_FILE"
+    return 0
+  fi
+
+  rm -f "$SIGNAL_FILE"
+
+  if [ -z "$injected_prompt" ]; then
+    log "📨 Empty signal file deleted: $SIGNAL_FILE"
+    return 0
+  fi
+
+  log "📨 Signal prompt injection received:"
+  while IFS= read -r line || [ -n "$line" ]; do
+    log "  $line"
+  done <<< "$injected_prompt"
+
+  PROMPT="${PROMPT}
+
+--- Mid-run prompt injection ($(date -Iseconds)) ---
+${injected_prompt}
+--- End mid-run prompt injection ---"
 }
 
 cleanup() {
@@ -149,7 +257,12 @@ if [ -n "$WORK_DIR" ]; then
   cd "$WORK_DIR" || { echo "Error: cannot cd to $WORK_DIR"; exit 1; }
 fi
 
-log "🚀 Ralph '$RALPH_NAME' started (model=$MODEL, max_runs=$MAX_RUNS, dir=$(pwd))"
+if [ "$ENFORCE_TASKQ_CYCLE" = true ] && ! command -v python3 &>/dev/null; then
+  log "❌ Taskq cycle guard requires python3 for 'ralph taskq stats'."
+  exit 1
+fi
+
+log "🚀 Ralph '$RALPH_NAME' started (cli=$CLI_BIN, model=$MODEL, max_runs=$MAX_RUNS, dir=$(pwd), taskq_guard=$ENFORCE_TASKQ_CYCLE)"
 log "📝 Prompt: ${PROMPT:0:120}$([ ${#PROMPT} -gt 120 ] && echo '...')"
 [ "$NO_LOG" = false ] && log "📄 Log: $LOG_FILE"
 
@@ -163,17 +276,33 @@ while true; do
     break
   fi
 
+  read_signal_prompt
+
   log "--- RUN $RUN_COUNT$([ "$MAX_RUNS" -gt 0 ] && echo "/$MAX_RUNS") ---"
+
+  BEFORE_DONE=0
+  BEFORE_TOTAL=0
+  BEFORE_BOARD=""
+  if [ "$ENFORCE_TASKQ_CYCLE" = true ]; then
+    if ! BEFORE_STATS_JSON="$(taskq_stats 2>/dev/null)"; then
+      log "❌ Taskq cycle guard failed: unable to collect pre-run stats."
+      break
+    fi
+    BEFORE_BOARD="$(printf '%s' "$BEFORE_STATS_JSON" | jq -r '.board.path // ""')"
+    BEFORE_DONE="$(printf '%s' "$BEFORE_STATS_JSON" | jq -r '.counts.done // 0')"
+    BEFORE_TOTAL="$(printf '%s' "$BEFORE_STATS_JSON" | jq -r '.counts.total // 0')"
+    if ! [[ -n "$BEFORE_BOARD" && "$BEFORE_DONE" =~ ^[0-9]+$ && "$BEFORE_TOTAL" =~ ^[0-9]+$ ]]; then
+      log "❌ Taskq cycle guard failed: invalid pre-run stats payload."
+      break
+    fi
+  fi
 
   # Update meta with current run
   sed -i "s/^current_run=.*/current_run=$RUN_COUNT/" "$META_FILE" 2>/dev/null \
     || echo "current_run=$RUN_COUNT" >> "$META_FILE"
 
   OUTPUT_TMP=$(mktemp)
-  claude -p --model="$MODEL" --dangerously-skip-permissions \
-    "$PROMPT" \
-    --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
-  | jq --unbuffered -r '
+  JQ_FILTER='
     if .type == "assistant" then
       .message.content[]? |
       if .type == "text" then
@@ -187,18 +316,67 @@ while true; do
         "📋 " + (.content | tostring | .[0:200])
       else empty end
     else empty end
-  ' | if [ "$NO_LOG" = false ]; then
-    tee -a "$LOG_FILE" "$OUTPUT_TMP"
-  else
-    tee "$OUTPUT_TMP"
-  fi
+  '
+  CODEX_JQ_FILTER='
+    fromjson? |
+    if . == null then
+      empty
+    elif .type == "item.completed" and (.item.type // "") == "agent_message" then
+      "💬 " + (.item.text // "")
+    elif .type == "item.completed" and (.item.type // "") == "command_execution" then
+      ("🔧 " + ((.item.command // "") | gsub("\\s+"; " ") | .[0:150])),
+      (if (((.item.aggregated_output // "") | gsub("\\s+"; " ")) | length) > 0 then
+         "📋 " + (((.item.aggregated_output // "") | gsub("\\s+"; " ")) | .[0:200])
+       else
+         empty
+       end)
+    elif .type == "error" then
+      "⚠️ " + ((.message // "") | .[0:300])
+    elif .type == "turn.failed" then
+      "⚠️ " + ((.error.message // "") | .[0:300])
+    else
+      empty
+    end
+  '
+  case "$CLI_BIN" in
+    claude)
+      claude -p --model="$MODEL" --dangerously-skip-permissions \
+        "$PROMPT" \
+        --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
+      | jq --unbuffered -r "$JQ_FILTER" \
+      | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
+      ;;
+    codex)
+      codex exec --dangerously-bypass-approvals-and-sandbox --json --model "$MODEL" "$PROMPT" </dev/null 2>&1 \
+      | jq --unbuffered -Rr "$CODEX_JQ_FILTER" \
+      | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
+      ;;
+    gemini)
+      gemini --model "$MODEL" "$PROMPT" </dev/null 2>/dev/null \
+      | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
+      ;;
+    opencode)
+      opencode run "$PROMPT" --model "$MODEL" </dev/null 2>/dev/null \
+      | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
+      ;;
+    *)
+      log "⚠️  Unknown harness '$CLI_BIN', falling back to claude"
+      claude -p --model="$MODEL" --dangerously-skip-permissions \
+        "$PROMPT" \
+        --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
+      | jq --unbuffered -r "$JQ_FILTER" \
+      | if [ "$NO_LOG" = false ]; then tee -a "$LOG_FILE" "$OUTPUT_TMP"; else tee "$OUTPUT_TMP"; fi
+      ;;
+  esac
   OUTPUT=$(<"$OUTPUT_TMP")
   rm -f "$OUTPUT_TMP"
 
   log "--- RUN $RUN_COUNT COMPLETE ---"
 
   # Check for errors
+  RATE_LIMITED=false
   if echo "$OUTPUT" | grep -q "You've hit your limit"; then
+    RATE_LIMITED=true
     if [ "$MARATHON" = true ]; then
       log "⏳ Rate limited. Sleeping 30 minutes..."
       sleep "$RATE_LIMIT_SLEEP" &
@@ -209,6 +387,36 @@ while true; do
     fi
   elif echo "$OUTPUT" | grep -qi "error\|fatal\|panic"; then
     log "⚠️  Possible error detected in output (continuing anyway)"
+  fi
+
+  if [ "$ENFORCE_TASKQ_CYCLE" = true ] && [ "$RATE_LIMITED" = false ]; then
+    if ! AFTER_STATS_JSON="$(taskq_stats 2>/dev/null)"; then
+      log "❌ Taskq cycle guard failed: unable to collect post-run stats."
+      break
+    fi
+    AFTER_BOARD="$(printf '%s' "$AFTER_STATS_JSON" | jq -r '.board.path // ""')"
+    AFTER_DONE="$(printf '%s' "$AFTER_STATS_JSON" | jq -r '.counts.done // 0')"
+    AFTER_TOTAL="$(printf '%s' "$AFTER_STATS_JSON" | jq -r '.counts.total // 0')"
+    if ! [[ -n "$AFTER_BOARD" && "$AFTER_DONE" =~ ^[0-9]+$ && "$AFTER_TOTAL" =~ ^[0-9]+$ ]]; then
+      log "❌ Taskq cycle guard failed: invalid post-run stats payload."
+      break
+    fi
+    if [ "$AFTER_BOARD" != "$BEFORE_BOARD" ]; then
+      log "❌ Taskq cycle guard failed: board changed mid-run."
+      log "   before: $BEFORE_BOARD"
+      log "   after : $AFTER_BOARD"
+      break
+    fi
+
+    DONE_DELTA=$((AFTER_DONE - BEFORE_DONE))
+    TOTAL_DELTA=$((AFTER_TOTAL - BEFORE_TOTAL))
+    if [ "$DONE_DELTA" -lt 1 ] || [ "$TOTAL_DELTA" -lt 1 ]; then
+      log "❌ Taskq cycle guard failed: expected >=1 task moved to done and >=1 new task added."
+      log "   observed: done_delta=$DONE_DELTA total_delta=$TOTAL_DELTA"
+      break
+    fi
+
+    log "✅ Taskq cycle guard passed: done_delta=$DONE_DELTA total_delta=$TOTAL_DELTA"
   fi
 
   sleep 2 &

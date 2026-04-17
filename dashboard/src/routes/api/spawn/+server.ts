@@ -5,7 +5,7 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json();
 
-	const result = spawnRalph({
+	const result = await spawnRalph({
 		prompt: body.prompt,
 		maxRuns: body.maxRuns,
 		name: body.name,

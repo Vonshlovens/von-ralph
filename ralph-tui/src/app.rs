@@ -1,16 +1,23 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Instant;
 
-use crate::ralph::{
-    self, RalphInstance, RalphPreset, SpawnOpts,
-};
+use crate::ralph::{self, RalphInstance, RalphPreset, SpawnOpts};
+use crate::terminal::NativeTerminal;
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum View {
     List,
     Log,
     Launch,
     Restart,
+    Inject,
+    Terminal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExternalAction {
+    OpenTerminal { cwd: String },
+    OpenNativeTerminal { cwd: String },
 }
 
 pub struct TextInput {
@@ -21,11 +28,17 @@ pub struct TextInput {
 impl TextInput {
     pub fn new(text: &str) -> Self {
         let cursor = text.chars().count();
-        Self { text: text.to_string(), cursor }
+        Self {
+            text: text.to_string(),
+            cursor,
+        }
     }
 
     pub fn empty() -> Self {
-        Self { text: String::new(), cursor: 0 }
+        Self {
+            text: String::new(),
+            cursor: 0,
+        }
     }
 
     pub fn set(&mut self, text: &str) {
@@ -44,7 +57,8 @@ impl TextInput {
 
     /// Byte offset of cursor position (for rendering)
     pub fn cursor_byte_offset(&self) -> usize {
-        self.text.char_indices()
+        self.text
+            .char_indices()
             .nth(self.cursor)
             .map(|(i, _)| i)
             .unwrap_or(self.text.len())
@@ -94,13 +108,34 @@ impl TextInput {
     /// Handle a key event. Returns true if consumed.
     pub fn handle_key(&mut self, key: &KeyEvent) -> bool {
         match key.code {
-            KeyCode::Char(c) => { self.insert_char(c); true }
-            KeyCode::Backspace => { self.backspace(); true }
-            KeyCode::Delete => { self.delete(); true }
-            KeyCode::Left => { self.move_left(); true }
-            KeyCode::Right => { self.move_right(); true }
-            KeyCode::Home => { self.move_home(); true }
-            KeyCode::End => { self.move_end(); true }
+            KeyCode::Char(c) => {
+                self.insert_char(c);
+                true
+            }
+            KeyCode::Backspace => {
+                self.backspace();
+                true
+            }
+            KeyCode::Delete => {
+                self.delete();
+                true
+            }
+            KeyCode::Left => {
+                self.move_left();
+                true
+            }
+            KeyCode::Right => {
+                self.move_right();
+                true
+            }
+            KeyCode::Home => {
+                self.move_home();
+                true
+            }
+            KeyCode::End => {
+                self.move_end();
+                true
+            }
             _ => false,
         }
     }
@@ -120,21 +155,28 @@ impl LaunchForm {
             .to_string();
         Self {
             fields: [
-                TextInput::empty(),              // prompt
-                TextInput::new("opus"),           // model
-                TextInput::new(&dir),             // dir
-                TextInput::empty(),              // name
-                TextInput::new("0"),             // max_runs
-                TextInput::new("false"),         // marathon
+                TextInput::empty(),            // prompt
+                TextInput::new("claude opus"), // cli + model
+                TextInput::new(&dir),          // dir
+                TextInput::empty(),            // name
+                TextInput::new("0"),           // max_runs
+                TextInput::new("false"),       // marathon
             ],
             focused: 0,
-            labels: ["Prompt", "Model", "Directory", "Name", "Max runs", "Marathon"],
+            labels: [
+                "Prompt",
+                "CLI  Model",
+                "Directory",
+                "Name",
+                "Max runs",
+                "Marathon",
+            ],
         }
     }
 
     pub fn reset(&mut self) {
         self.fields[0].clear();
-        self.fields[1].set("opus");
+        self.fields[1].set("claude opus");
         let dir = std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
@@ -152,6 +194,11 @@ pub struct RestartForm {
     pub max_runs: TextInput,
 }
 
+pub struct InjectForm {
+    pub instance_name: String,
+    pub prompt: TextInput,
+}
+
 pub struct App {
     pub view: View,
     pub instances: Vec<RalphInstance>,
@@ -163,12 +210,17 @@ pub struct App {
     pub log_instance_name: String,
     pub launch_form: LaunchForm,
     pub restart_form: RestartForm,
+    pub inject_form: InjectForm,
+    pub inject_return_view: View,
     pub should_quit: bool,
     pub status_msg: String,
     pub confirm_kill: Option<(String, Instant)>,
     pub presets: Vec<RalphPreset>,
     pub preset_selected: usize,
     pub show_presets: bool,
+    pub pending_action: Option<ExternalAction>,
+    pub terminal_return_view: View,
+    pub native_terminal: Option<NativeTerminal>,
 }
 
 impl App {
@@ -183,13 +235,24 @@ impl App {
             log_file_pos: 0,
             log_instance_name: String::new(),
             launch_form: LaunchForm::new(),
-            restart_form: RestartForm { instance_name: String::new(), max_runs: TextInput::new("0") },
+            restart_form: RestartForm {
+                instance_name: String::new(),
+                max_runs: TextInput::new("0"),
+            },
+            inject_form: InjectForm {
+                instance_name: String::new(),
+                prompt: TextInput::empty(),
+            },
+            inject_return_view: View::List,
             should_quit: false,
             status_msg: String::new(),
             confirm_kill: None,
             presets: ralph::load_presets(),
             preset_selected: 0,
             show_presets: false,
+            pending_action: None,
+            terminal_return_view: View::List,
+            native_terminal: None,
         };
         app.refresh_instances();
         app
@@ -210,7 +273,14 @@ impl App {
         match self.view {
             View::List => self.refresh_instances(),
             View::Log => self.refresh_log(),
-            View::Launch | View::Restart => {}
+            View::Launch | View::Restart | View::Inject => {}
+            View::Terminal => {
+                match self.terminal_return_view {
+                    View::Log => self.refresh_log(),
+                    _ => self.refresh_instances(),
+                }
+                self.refresh_native_terminal();
+            }
         }
         // Expire kill confirmation after 3 seconds
         if let Some((_, when)) = &self.confirm_kill {
@@ -222,7 +292,11 @@ impl App {
     }
 
     fn refresh_log(&mut self) {
-        if let Some(inst) = self.instances.iter().find(|i| i.name == self.log_instance_name) {
+        if let Some(inst) = self
+            .instances
+            .iter()
+            .find(|i| i.name == self.log_instance_name)
+        {
             let path = inst.log_path.clone();
             let (new_lines, new_pos) = ralph::read_log_incremental(&path, self.log_file_pos);
             if !new_lines.is_empty() {
@@ -275,9 +349,13 @@ impl App {
     }
 
     fn do_launch(&mut self) {
+        let raw_cli_model = self.launch_form.fields[1].value().to_string();
+        let resolved = ralph::harness::resolve(&raw_cli_model);
+        self.launch_form.fields[1].set(&format!("{} {}", resolved.cli, resolved.model));
         let opts = SpawnOpts {
             prompt: self.launch_form.fields[0].value().to_string(),
-            model: self.launch_form.fields[1].value().to_string(),
+            model: resolved.model,
+            cli: resolved.cli,
             dir: self.launch_form.fields[2].value().to_string(),
             name: self.launch_form.fields[3].value().to_string(),
             max_runs: self.launch_form.fields[4].value().parse().unwrap_or(0),
@@ -292,10 +370,178 @@ impl App {
         self.refresh_instances();
     }
 
+    fn open_inject_for(&mut self, name: String, return_view: View) {
+        let Some(inst) = self.instances.iter().find(|i| i.name == name) else {
+            self.status_msg = format!("No ralph named {}", name);
+            return;
+        };
+        if !inst.alive {
+            self.status_msg = format!("{} is not running", inst.name);
+            return;
+        }
+
+        self.inject_form.instance_name = inst.name.clone();
+        self.inject_form.prompt.clear();
+        self.inject_return_view = return_view;
+        self.view = View::Inject;
+        self.status_msg.clear();
+        self.confirm_kill = None;
+    }
+
+    fn open_inject_for_selected(&mut self) {
+        if let Some(inst) = self.selected_instance() {
+            self.open_inject_for(inst.name.clone(), View::List);
+        }
+    }
+
+    fn open_inject_for_log(&mut self) {
+        self.refresh_instances();
+        self.open_inject_for(self.log_instance_name.clone(), View::Log);
+    }
+
+    fn cancel_inject(&mut self) {
+        self.inject_form.prompt.clear();
+        self.view = self.inject_return_view;
+        self.status_msg.clear();
+    }
+
+    fn do_inject(&mut self) {
+        let name = self.inject_form.instance_name.clone();
+        let prompt = self.inject_form.prompt.value().to_string();
+        match ralph::inject_prompt(&name, &prompt) {
+            Ok(msg) => {
+                self.status_msg = msg;
+                self.inject_form.prompt.clear();
+                self.view = self.inject_return_view;
+                self.refresh_instances();
+            }
+            Err(e) => self.status_msg = format!("Error: {}", e),
+        }
+    }
+
+    fn refresh_native_terminal(&mut self) {
+        let mut exited = false;
+        let mut had_error = None;
+        if let Some(term) = self.native_terminal.as_mut() {
+            term.drain_output();
+            match term.has_exited() {
+                Ok(done) => exited = done,
+                Err(e) => had_error = Some(e.to_string()),
+            }
+        }
+
+        if let Some(err) = had_error {
+            self.status_msg = format!("Terminal error: {}", err);
+            self.close_native_terminal();
+        } else if exited {
+            self.status_msg = "Terminal exited".to_string();
+            self.close_native_terminal();
+        }
+    }
+
+    fn terminal_cwd_for_current_view(&self) -> String {
+        let from_instance = match self.view {
+            View::List => self.selected_instance().map(|inst| inst.work_dir.as_str()),
+            View::Log => self
+                .instances
+                .iter()
+                .find(|inst| inst.name == self.log_instance_name)
+                .map(|inst| inst.work_dir.as_str()),
+            View::Launch | View::Restart | View::Inject | View::Terminal => None,
+        };
+
+        if let Some(dir) = from_instance {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    }
+
+    fn queue_terminal_action(&mut self) {
+        let cwd = self.terminal_cwd_for_current_view();
+        self.pending_action = Some(ExternalAction::OpenTerminal { cwd });
+        self.confirm_kill = None;
+    }
+
+    fn queue_native_terminal_action(&mut self) {
+        let cwd = self.terminal_cwd_for_current_view();
+        self.pending_action = Some(ExternalAction::OpenNativeTerminal { cwd });
+        self.terminal_return_view = self.view;
+        self.confirm_kill = None;
+    }
+
+    pub fn open_native_terminal(&mut self, cwd: &str, cols: u16, rows: u16) {
+        if self.native_terminal.is_some() {
+            self.close_native_terminal();
+        }
+        match NativeTerminal::spawn(cwd, cols, rows) {
+            Ok(term) => {
+                self.native_terminal = Some(term);
+                self.view = View::Terminal;
+                self.status_msg.clear();
+            }
+            Err(e) => {
+                self.status_msg = format!("Error: {}", e);
+                self.view = self.terminal_return_view;
+            }
+        }
+    }
+
+    pub fn close_native_terminal(&mut self) {
+        self.native_terminal = None;
+        self.view = self.terminal_return_view;
+    }
+
+    pub fn resize_native_terminal(&mut self, cols: u16, rows: u16) {
+        if let Some(term) = self.native_terminal.as_mut() {
+            if let Err(e) = term.resize(cols, rows) {
+                self.status_msg = format!("Terminal resize failed: {}", e);
+            }
+        }
+    }
+
+    fn handle_terminal_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.status_msg = "Closed terminal (Ctrl-G)".to_string();
+            self.close_native_terminal();
+            return;
+        }
+
+        if let Some(term) = self.native_terminal.as_mut() {
+            match term.send_key(key) {
+                Ok(_) => term.drain_output(),
+                Err(e) => {
+                    self.status_msg = format!("Terminal I/O error: {}", e);
+                    self.close_native_terminal();
+                }
+            }
+        } else {
+            self.close_native_terminal();
+        }
+    }
+
+    pub fn take_external_action(&mut self) -> Option<ExternalAction> {
+        self.pending_action.take()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Ctrl-C always quits
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Ctrl-C quits in normal modes; terminal mode passes Ctrl-C to shell.
+        if self.view != View::Terminal
+            && key.code == KeyCode::Char('c')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
             self.should_quit = true;
+            return;
+        }
+
+        if self.view == View::Terminal {
+            self.handle_terminal_key(key);
             return;
         }
 
@@ -309,6 +555,8 @@ impl App {
             View::Log => self.handle_log_key(key),
             View::Launch => self.handle_launch_key(key),
             View::Restart => self.handle_restart_key(key),
+            View::Inject => self.handle_inject_key(key),
+            View::Terminal => {}
         }
     }
 
@@ -340,6 +588,15 @@ impl App {
                     self.status_msg = format!("Press K again to kill {}", name);
                     self.confirm_kill = Some((name, Instant::now()));
                 }
+            }
+            KeyCode::Char('i') => {
+                self.open_inject_for_selected();
+            }
+            KeyCode::Char('t') => {
+                self.queue_terminal_action();
+            }
+            KeyCode::Char('T') => {
+                self.queue_native_terminal_action();
             }
             KeyCode::Char('p') => {
                 if !self.presets.is_empty() {
@@ -387,7 +644,8 @@ impl App {
                 self.status_msg.clear();
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.log_scroll = (self.log_scroll + 1).min(self.log_content.len().saturating_sub(1));
+                self.log_scroll =
+                    (self.log_scroll + 1).min(self.log_content.len().saturating_sub(1));
                 self.log_auto_follow = false;
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -413,8 +671,18 @@ impl App {
                 self.status_msg = format!("Press K again to kill {}", name);
                 self.confirm_kill = Some((name, Instant::now()));
             }
+            KeyCode::Char('i') => {
+                self.open_inject_for_log();
+            }
+            KeyCode::Char('t') => {
+                self.queue_terminal_action();
+            }
+            KeyCode::Char('T') => {
+                self.queue_native_terminal_action();
+            }
             KeyCode::PageDown => {
-                self.log_scroll = (self.log_scroll + 20).min(self.log_content.len().saturating_sub(1));
+                self.log_scroll =
+                    (self.log_scroll + 20).min(self.log_content.len().saturating_sub(1));
                 self.log_auto_follow = false;
             }
             KeyCode::PageUp => {
@@ -443,7 +711,11 @@ impl App {
             }
             KeyCode::Char(' ') if focused == 5 => {
                 // Toggle marathon
-                let new_val = if self.launch_form.fields[5].value() == "true" { "false" } else { "true" };
+                let new_val = if self.launch_form.fields[5].value() == "true" {
+                    "false"
+                } else {
+                    "true"
+                };
                 self.launch_form.fields[5].set(new_val);
             }
             _ if focused != 5 => {
@@ -457,7 +729,9 @@ impl App {
         match key.code {
             KeyCode::Esc => self.show_presets = false,
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.preset_selected > 0 { self.preset_selected -= 1; }
+                if self.preset_selected > 0 {
+                    self.preset_selected -= 1;
+                }
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.preset_selected + 1 < self.presets.len() {
@@ -469,7 +743,9 @@ impl App {
                     self.launch_form.reset();
                     self.launch_form.fields[0].set(&p.prompt);
                     self.launch_form.fields[1].set(&p.model);
-                    self.launch_form.fields[2].set(&p.dir);
+                    if !p.dir.is_empty() {
+                        self.launch_form.fields[2].set(&p.dir);
+                    }
                     self.launch_form.fields[4].set(&p.max_runs.to_string());
                     self.launch_form.fields[5].set(if p.marathon { "true" } else { "false" });
                     self.launch_form.focused = 1; // land on Model so user can Tab → Max runs
@@ -504,12 +780,36 @@ impl App {
                     self.restart_form.max_runs.set("0");
                 }
             }
-            KeyCode::Left => { self.restart_form.max_runs.move_left(); }
-            KeyCode::Right => { self.restart_form.max_runs.move_right(); }
-            KeyCode::Home => { self.restart_form.max_runs.move_home(); }
-            KeyCode::End => { self.restart_form.max_runs.move_end(); }
-            KeyCode::Delete => { self.restart_form.max_runs.delete(); }
+            KeyCode::Left => {
+                self.restart_form.max_runs.move_left();
+            }
+            KeyCode::Right => {
+                self.restart_form.max_runs.move_right();
+            }
+            KeyCode::Home => {
+                self.restart_form.max_runs.move_home();
+            }
+            KeyCode::End => {
+                self.restart_form.max_runs.move_end();
+            }
+            KeyCode::Delete => {
+                self.restart_form.max_runs.delete();
+            }
             _ => {}
+        }
+    }
+
+    fn handle_inject_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.cancel_inject();
+            }
+            KeyCode::Enter => {
+                self.do_inject();
+            }
+            _ => {
+                self.inject_form.prompt.handle_key(&key);
+            }
         }
     }
 
@@ -522,5 +822,48 @@ impl App {
         }
         self.view = View::List;
         self.refresh_instances();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn list_view_t_uppercase_queues_native_terminal_action() {
+        let mut app = App::new();
+        app.view = View::List;
+
+        app.handle_key(key(KeyCode::Char('T'), KeyModifiers::NONE));
+
+        assert!(matches!(
+            app.take_external_action(),
+            Some(ExternalAction::OpenNativeTerminal { .. })
+        ));
+    }
+
+    #[test]
+    fn ctrl_g_closes_terminal_mode() {
+        let mut app = App::new();
+        app.view = View::Terminal;
+        app.terminal_return_view = View::Log;
+
+        app.handle_key(key(KeyCode::Char('g'), KeyModifiers::CONTROL));
+
+        assert_eq!(app.view, View::Log);
+    }
+
+    #[test]
+    fn ctrl_c_does_not_quit_when_terminal_mode_active() {
+        let mut app = App::new();
+        app.view = View::Terminal;
+
+        app.handle_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL));
+
+        assert!(!app.should_quit);
     }
 }
