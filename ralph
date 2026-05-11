@@ -31,18 +31,27 @@ Arguments:
   max_runs     Max iterations (default: unlimited). Can be first arg if numeric.
 
 Options:
-  -d, --dir <path>     Working directory (default: current dir)
-  -m, --model <model>  Model to use (default: opus)
-  -n, --name <name>    Name this ralph instance (default: auto-generated)
-  --marathon            Enable rate-limit detection with 30min sleep
-  --no-log              Disable log files (output to terminal only)
-  -h, --help            Show this help
+  -d, --dir <path>        Working directory (default: current dir)
+  -m, --model <model>     Model to use (default depends on harness)
+  -n, --name <name>       Name this ralph instance (default: auto-generated)
+  -H, --harness <name>    Agent CLI to drive: claude (default), codex, opencode, gh
+  --marathon              Enable rate-limit detection with 30min sleep
+  --no-log                Disable log files (output to terminal only)
+  -h, --help              Show this help
+
+Harness defaults (override with -m):
+  claude    opus
+  codex     gpt-5.5            (reasoning: xhigh)
+  opencode  github-copilot/claude-sonnet-4.6   (variant: max)
+  gh        claude-sonnet-4.6  (effort:    high)
 
 Examples:
   ralph 10                                          # 10 runs with default prompt
   ralph "See AGENT_PROMPT.md" 10                    # Custom prompt, 10 runs
   ralph "Fix all lint errors" -d ~/my-project -n lint-fixer
   ralph --marathon                                  # Infinite with rate-limit recovery
+  ralph "Refactor utils" -H codex                   # Drive OpenAI codex instead
+  ralph "Add tests" -H opencode -m anthropic/claude-sonnet-4-6
 USAGE
   exit 0
 }
@@ -51,8 +60,10 @@ USAGE
 PROMPT=""
 MAX_RUNS=0
 WORK_DIR=""
-MODEL="opus"
+MODEL=""
+MODEL_EXPLICIT=false
 RALPH_NAME=""
+HARNESS="claude"
 MARATHON=false
 NO_LOG=false
 
@@ -60,8 +71,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage ;;
     -d|--dir) WORK_DIR="$2"; shift 2 ;;
-    -m|--model) MODEL="$2"; shift 2 ;;
+    -m|--model) MODEL="$2"; MODEL_EXPLICIT=true; shift 2 ;;
     -n|--name) RALPH_NAME="$2"; shift 2 ;;
+    -H|--harness) HARNESS="$2"; shift 2 ;;
     --marathon) MARATHON=true; shift ;;
     --no-log) NO_LOG=true; shift ;;
     -*)
@@ -91,6 +103,38 @@ if [ -z "$PROMPT" ]; then
   PROMPT="$DEFAULT_PROMPT"
 fi
 
+# Validate harness and resolve default model
+case "$HARNESS" in
+  claude)   DEFAULT_MODEL="opus" ;;
+  codex)    DEFAULT_MODEL="gpt-5.5" ;;
+  opencode) DEFAULT_MODEL="github-copilot/claude-sonnet-4.6" ;;
+  gh)       DEFAULT_MODEL="claude-sonnet-4.6" ;;
+  *)
+    echo "Error: unknown harness '$HARNESS' (expected: claude, codex, opencode, gh)"
+    exit 1
+    ;;
+esac
+if [ -z "$MODEL" ]; then
+  MODEL="$DEFAULT_MODEL"
+fi
+
+# Check that the harness binary is available
+case "$HARNESS" in
+  claude)   HARNESS_BIN="claude" ;;
+  codex)    HARNESS_BIN="codex" ;;
+  opencode) HARNESS_BIN="opencode" ;;
+  gh)       HARNESS_BIN="copilot" ;;
+esac
+if ! command -v "$HARNESS_BIN" &>/dev/null; then
+  echo "Error: harness '$HARNESS' requires the '$HARNESS_BIN' binary on PATH."
+  case "$HARNESS" in
+    codex)    echo "  Install: npm install -g @openai/codex" ;;
+    opencode) echo "  Install: see https://opencode.ai" ;;
+    gh)       echo "  Install: npm install -g @github/copilot" ;;
+  esac
+  exit 1
+fi
+
 # --- Setup ---
 RALPH_DIR="$HOME/.ralph"
 LOG_DIR="$RALPH_DIR/logs"
@@ -117,6 +161,7 @@ prompt=$PROMPT
 max_runs=$MAX_RUNS
 current_run=0
 model=$MODEL
+harness=$HARNESS
 work_dir=${WORK_DIR:-$(pwd)}
 marathon=$MARATHON
 started=$(date -Iseconds)
@@ -144,12 +189,129 @@ cleanup() {
 
 trap cleanup INT TERM
 
+# --- Per-harness invocation ---
+# Each branch runs the CLI in non-interactive / full-autonomy mode and pipes
+# JSONL events through jq to produce a uniform line-oriented log.
+run_harness() {
+  local harness="$1" model="$2" prompt="$3"
+  case "$harness" in
+    claude)
+      claude -p --model="$model" --dangerously-skip-permissions \
+        "$prompt" \
+        --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
+      | jq --unbuffered -r '
+        if .type == "assistant" then
+          .message.content[]? |
+          if .type == "text" then
+            "💬 " + .text
+          elif .type == "tool_use" then
+            "🔧 " + .name + ": " + (.input | tostring | .[0:150])
+          else empty end
+        elif .type == "user" then
+          .message.content[]? |
+          if .type == "tool_result" then
+            "📋 " + (.content | tostring | .[0:200])
+          else empty end
+        else empty end
+      '
+      ;;
+
+    codex)
+      codex exec \
+        --json \
+        --dangerously-bypass-approvals-and-sandbox \
+        --skip-git-repo-check \
+        -m "$model" \
+        -c model_reasoning_effort="xhigh" \
+        "$prompt" </dev/null 2>/dev/null \
+      | jq --unbuffered -r '
+        if .type == "item.completed" then
+          .item as $i |
+          if $i.type == "agent_message" then
+            "💬 " + ($i.text // "")
+          elif $i.type == "command_execution" then
+            "🔧 shell: " + (($i.command // "") | tostring | .[0:150])
+              + "\n📋 [exit " + (($i.exit_code // "?") | tostring) + "] "
+              + (($i.aggregated_output // "") | tostring | .[0:200])
+          elif $i.type == "file_change" then
+            "🔧 file_change: " + (($i.changes // []) | map((.kind // "?") + " " + (.path // "?")) | join(", "))
+          else empty end
+        elif .type == "turn.failed" then
+          "⚠️  turn.failed: " + ((.error.message // "") | tostring | .[0:200])
+        elif .type == "error" then
+          "⚠️  error: " + ((.message // "") | tostring | .[0:200])
+        else empty end
+      '
+      ;;
+
+    opencode)
+      opencode run \
+        --format json \
+        --dangerously-skip-permissions \
+        --model "$model" \
+        --variant max \
+        --print-logs --log-level ERROR \
+        "$prompt" </dev/null 2>/dev/null \
+      | jq --unbuffered -r '
+        if .type == "tool_use" then
+          .part as $p |
+          if ($p.state.status // "") == "completed" then
+            "🔧 " + ($p.tool // "?") + ": " + (($p.state.input // {}) | tostring | .[0:150])
+              + "\n📋 " + (($p.state.output // "") | tostring | .[0:200])
+          else empty end
+        elif .type == "step_finish" then
+          "✅ step_finish reason=" + ((.part.reason // "?") | tostring)
+            + " tokens(in=" + ((.part.tokens.input // 0) | tostring)
+            + " out=" + ((.part.tokens.output // 0) | tostring) + ")"
+        elif .type == "step_start" then
+          "▶️  step_start"
+        else empty end
+      '
+      ;;
+
+    gh)
+      # The copilot CLI has no --cwd flag; we already cd-ed into WORK_DIR above.
+      # Schema for --output-format json is undocumented and shifting; we
+      # extract best-effort and fall back to printing the raw line.
+      copilot -p "$prompt" \
+        --allow-all-tools --allow-all-paths --allow-all-urls \
+        --add-dir "$(pwd)" \
+        --model "$model" \
+        --effort high \
+        --output-format json \
+        --no-color </dev/null 2>/dev/null \
+      | jq --unbuffered -r '
+        . as $e |
+        (.type // .event // "") as $t |
+        if ($t == "assistant" or $t == "message" or $t == "text") then
+          "💬 " + ((.text // .content // "") | tostring)
+        elif ($t == "tool_use" or $t == "tool_call") then
+          "🔧 " + ((.name // .tool // "?") | tostring) + ": "
+            + (((.input // .arguments // {}) | tostring) | .[0:150])
+        elif $t == "tool_result" then
+          "📋 " + (((.output // .content // "") | tostring) | .[0:200])
+        elif ($t == "error" or .error) then
+          "⚠️  " + (((.error // .message // "") | tostring) | .[0:200])
+        else
+          # Unknown shape — surface it so we can adapt
+          "ℹ️  " + ($e | tostring | .[0:200])
+        end
+      '
+      ;;
+
+    *)
+      echo "Unknown harness: $harness" >&2
+      return 1
+      ;;
+  esac
+}
+
 # Change to working directory if specified
 if [ -n "$WORK_DIR" ]; then
   cd "$WORK_DIR" || { echo "Error: cannot cd to $WORK_DIR"; exit 1; }
 fi
 
-log "🚀 Ralph '$RALPH_NAME' started (model=$MODEL, max_runs=$MAX_RUNS, dir=$(pwd))"
+log "🚀 Ralph '$RALPH_NAME' started (harness=$HARNESS, model=$MODEL, max_runs=$MAX_RUNS, dir=$(pwd))"
 log "📝 Prompt: ${PROMPT:0:120}$([ ${#PROMPT} -gt 120 ] && echo '...')"
 [ "$NO_LOG" = false ] && log "📄 Log: $LOG_FILE"
 
@@ -170,24 +332,8 @@ while true; do
     || echo "current_run=$RUN_COUNT" >> "$META_FILE"
 
   OUTPUT_TMP=$(mktemp)
-  claude -p --model="$MODEL" --dangerously-skip-permissions \
-    "$PROMPT" \
-    --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
-  | jq --unbuffered -r '
-    if .type == "assistant" then
-      .message.content[]? |
-      if .type == "text" then
-        "💬 " + .text
-      elif .type == "tool_use" then
-        "🔧 " + .name + ": " + (.input | tostring | .[0:150])
-      else empty end
-    elif .type == "user" then
-      .message.content[]? |
-      if .type == "tool_result" then
-        "📋 " + (.content | tostring | .[0:200])
-      else empty end
-    else empty end
-  ' | if [ "$NO_LOG" = false ]; then
+  run_harness "$HARNESS" "$MODEL" "$PROMPT" \
+  | if [ "$NO_LOG" = false ]; then
     tee -a "$LOG_FILE" "$OUTPUT_TMP"
   else
     tee "$OUTPUT_TMP"

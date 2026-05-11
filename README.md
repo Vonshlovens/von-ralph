@@ -1,15 +1,18 @@
 # von-ralph
 
-Headless Claude Code agent loops, inspired by the [Ralph Wiggum technique](https://ghuntley.com/ralph/) by Geoffrey Huntley.
+Headless agent loops, inspired by the [Ralph Wiggum technique](https://ghuntley.com/ralph/) by Geoffrey Huntley.
+
+Drive **Claude Code**, **OpenAI Codex**, **opencode** (sst/opencode), or **GitHub Copilot CLI** — each in non-interactive full-autonomy mode — in a managed loop with logging, PID tracking, and rate-limit recovery.
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
-| `ralph` | Main loop — runs a prompt N times with logging, PID tracking, and optional rate-limit recovery |
-| `alph` | Single headless run (no loop) |
+| `ralph` | Main loop — runs a prompt N times with logging, PID tracking, and optional rate-limit recovery. Supports multiple harnesses via `-H`. |
+| `alph` | Single headless run (no loop), same `-H` harness flag |
 | `ralph-marathon` | Legacy infinite loop with rate-limit sleep (use `ralph --marathon` instead) |
-| `ralph-status` | Monitor running ralphs — list, tail logs, kill instances |
+| `ralph-status` | Monitor running ralphs — list, tail logs, kill instances (preserves harness on restart) |
+| `rmux` / `ralph-tui` | TUI for launching and monitoring ralphs, with a harness picker in the spawn form |
 
 ## Quick start
 
@@ -29,6 +32,31 @@ ralph-status tail kanban-worker
 # Kill it
 ralph-status kill kanban-worker
 ```
+
+## Harnesses
+
+`-H/--harness` selects which agent CLI drives the loop. Each one is invoked in
+non-interactive / full-autonomy mode (no per-action permission prompts) and its
+JSONL event stream is parsed into a uniform log.
+
+| Harness | Binary | Install | Default model | Reasoning |
+|---------|--------|---------|---------------|-----------|
+| `claude` (default) | `claude` | Claude Code | `opus` | — |
+| `codex` | `codex` | `npm i -g @openai/codex` | `gpt-5.5` | `-c model_reasoning_effort=xhigh` |
+| `opencode` | `opencode` | see https://opencode.ai | `github-copilot/claude-sonnet-4.6` | `--variant max` |
+| `gh` | `copilot` | `npm i -g @github/copilot` | `claude-sonnet-4.6` | `--effort high` |
+
+```bash
+ralph "Refactor utils" -H codex
+ralph "Add tests" -H opencode -m anthropic/claude-sonnet-4-6
+ralph "Triage TODOs" -H gh
+```
+
+Notes:
+- **codex** uses `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check` and `--json` event streaming.
+- **opencode** uses `opencode run --format json --dangerously-skip-permissions`. Its JSONL stream does *not* include assistant text events — only `tool_use` and `step_finish`. Tool output is parsed into the log; if you need the final assistant reply, run `opencode export <sessionID>`.
+- **gh** (GitHub Copilot CLI's `copilot` binary, not `gh copilot`) is invoked with `--allow-all-tools --allow-all-paths --allow-all-urls`. The JSONL schema is undocumented and shifting; the parser is best-effort with raw-line fallback.
+- Auth is per-harness (use each CLI's normal login flow before launching).
 
 ## Claude Code skill
 

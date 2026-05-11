@@ -4,7 +4,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 
-use crate::app::{App, TextInput, View};
+use crate::app::{
+    App, TextInput, View,
+    FIELD_COUNT, FIELD_HARNESS, FIELD_MARATHON,
+};
+use crate::ralph::HARNESSES;
 
 /// Render a TextInput as a Line with a visible block cursor
 fn render_input_line<'a>(input: &'a TextInput, focused: bool) -> Line<'a> {
@@ -71,6 +75,7 @@ fn render_list(frame: &mut Frame, app: &mut App) {
     let header = Row::new(vec![
         Cell::from(" Status"),
         Cell::from("Name"),
+        Cell::from("Harness"),
         Cell::from("Model"),
         Cell::from("Run"),
         Cell::from("Dir"),
@@ -106,6 +111,7 @@ fn render_list(frame: &mut Frame, app: &mut App) {
             Row::new(vec![
                 status,
                 Cell::from(inst.name.clone()),
+                Cell::from(inst.harness.clone()),
                 Cell::from(inst.model.clone()),
                 Cell::from(run),
                 Cell::from(dir),
@@ -119,7 +125,8 @@ fn render_list(frame: &mut Frame, app: &mut App) {
         [
             Constraint::Length(8),
             Constraint::Min(20),
-            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(14),
             Constraint::Length(8),
             Constraint::Min(15),
             Constraint::Length(20),
@@ -266,6 +273,7 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // title
+            Constraint::Length(3), // harness
             Constraint::Length(3), // prompt
             Constraint::Length(3), // model
             Constraint::Length(3), // dir
@@ -285,7 +293,7 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Paragraph::new(title), chunks[0]);
 
     // Form fields
-    for i in 0..6 {
+    for i in 0..FIELD_COUNT {
         let is_focused = app.launch_form.focused == i;
         let border_style = if is_focused {
             Style::default().fg(Color::Cyan)
@@ -296,10 +304,11 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
         let label = app.launch_form.labels[i];
         let input = &app.launch_form.fields[i];
 
-        let content: Line = if i == 5 {
-            // Marathon toggle
+        let content: Line = if i == FIELD_MARATHON {
             let display = if input.value() == "true" { " [x] enabled" } else { " [ ] disabled" };
             Line::from(display)
+        } else if i == FIELD_HARNESS {
+            render_harness_line(input.value(), is_focused)
         } else {
             render_input_line(input, is_focused)
         };
@@ -319,12 +328,34 @@ fn render_launch(frame: &mut Frame, app: &mut App) {
     let bar = Line::from(vec![
         Span::styled(" Tab", Style::default().fg(Color::Cyan)),
         Span::raw(" next  "),
+        Span::styled("←/→", Style::default().fg(Color::Cyan)),
+        Span::raw(" cycle harness  "),
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
         Span::raw(" launch  "),
         Span::styled("Esc", Style::default().fg(Color::Cyan)),
         Span::raw(" cancel"),
     ]);
-    frame.render_widget(Paragraph::new(bar), chunks[8]);
+    frame.render_widget(Paragraph::new(bar), chunks[9]);
+}
+
+fn render_harness_line<'a>(current: &'a str, focused: bool) -> Line<'a> {
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    for (i, h) in HARNESSES.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let style = if *h == current {
+            if focused {
+                Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            }
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(format!(" {} ", h), style));
+    }
+    Line::from(spans)
 }
 
 fn render_restart(frame: &mut Frame, app: &mut App) {

@@ -13,6 +13,7 @@ pub struct RalphInstance {
     pub prompt: String,
     pub max_runs: u32,
     pub model: String,
+    pub harness: String,
     pub work_dir: String,
     pub marathon: bool,
     pub started: String,
@@ -28,9 +29,21 @@ pub struct RalphPreset {
     pub description: String,
     pub prompt: String,
     pub model: String,
+    pub harness: String,
     pub dir: String,
     pub max_runs: u32,
     pub marathon: bool,
+}
+
+pub const HARNESSES: &[&str] = &["claude", "codex", "opencode", "gh"];
+
+pub fn default_model_for_harness(harness: &str) -> &'static str {
+    match harness {
+        "codex" => "gpt-5.5",
+        "opencode" => "github-copilot/claude-sonnet-4.6",
+        "gh" => "claude-sonnet-4.6",
+        _ => "opus",
+    }
 }
 
 pub fn load_presets() -> Vec<RalphPreset> {
@@ -49,11 +62,17 @@ pub fn load_presets() -> Vec<RalphPreset> {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
                 let str_field = |key: &str| v[key].as_str().unwrap_or("").to_string();
+                let harness = v["harness"].as_str().unwrap_or("claude").to_string();
+                let model = {
+                    let m = str_field("model");
+                    if m.is_empty() { default_model_for_harness(&harness).to_string() } else { m }
+                };
                 presets.push(RalphPreset {
                     name: str_field("name"),
                     description: str_field("description"),
                     prompt: str_field("prompt"),
-                    model: str_field("model"),
+                    model,
+                    harness,
                     dir: str_field("dir"),
                     max_runs: v["max_runs"].as_u64().unwrap_or(0) as u32,
                     marathon: v["marathon"].as_bool().unwrap_or(false),
@@ -65,13 +84,10 @@ pub fn load_presets() -> Vec<RalphPreset> {
 }
 
 fn find_presets_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        let candidate = exe
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("../../../presets");
-        if candidate.is_dir() {
-            return candidate;
+    for c in repo_candidates() {
+        let p = c.join("presets");
+        if p.is_dir() {
+            return p;
         }
     }
     dirs::home_dir()
@@ -79,10 +95,38 @@ fn find_presets_dir() -> PathBuf {
         .join(".ralph/presets")
 }
 
+/// Candidate locations for the von-ralph repo root, in priority order.
+fn repo_candidates() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+
+    // 1. Explicit override via env var
+    if let Ok(p) = std::env::var("VON_RALPH_HOME") {
+        out.push(PathBuf::from(p));
+    }
+
+    // 2. Three dirs up from the running binary
+    //    (works for target/release/ralph-tui and cargo-installed in any layout
+    //    where the binary sits inside the repo)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            out.push(parent.join("../../.."));
+        }
+    }
+
+    // 3. Common locations under $HOME
+    if let Some(home) = dirs::home_dir() {
+        out.push(home.join("von-ralph"));
+        out.push(home.join("projects/von-ralph"));
+    }
+
+    out
+}
+
 pub struct SpawnOpts {
     pub prompt: String,
     pub max_runs: u32,
     pub model: String,
+    pub harness: String,
     pub dir: String,
     pub name: String,
     pub marathon: bool,
@@ -114,6 +158,7 @@ fn parse_meta(path: &Path) -> Option<RalphInstance> {
     let mut prompt = String::new();
     let mut max_runs: u32 = 0;
     let mut model = String::from("opus");
+    let mut harness = String::from("claude");
     let mut work_dir = String::new();
     let mut marathon = false;
     let mut started = String::new();
@@ -127,6 +172,7 @@ fn parse_meta(path: &Path) -> Option<RalphInstance> {
                 "prompt" => prompt = val.trim().to_string(),
                 "max_runs" => max_runs = val.trim().parse().unwrap_or(0),
                 "model" => model = val.trim().to_string(),
+                "harness" => harness = val.trim().to_string(),
                 "work_dir" => work_dir = val.trim().to_string(),
                 "marathon" => marathon = val.trim() == "true",
                 "started" => started = val.trim().to_string(),
@@ -134,6 +180,9 @@ fn parse_meta(path: &Path) -> Option<RalphInstance> {
                 _ => {}
             }
         }
+    }
+    if harness.is_empty() {
+        harness = "claude".to_string();
     }
 
     if name.is_empty() {
@@ -154,6 +203,7 @@ fn parse_meta(path: &Path) -> Option<RalphInstance> {
         prompt,
         max_runs,
         model,
+        harness,
         work_dir,
         marathon,
         started,
@@ -217,6 +267,7 @@ pub fn list_instances() -> Vec<RalphInstance> {
                     prompt: "(finished — check log)".to_string(),
                     max_runs: 0,
                     model: "?".to_string(),
+                    harness: "?".to_string(),
                     work_dir: String::new(),
                     marathon: false,
                     started,
@@ -287,19 +338,16 @@ fn clean_meta(name: &str) {
 }
 
 pub fn ralph_bin_path() -> PathBuf {
-    // Try relative to the binary's location first, then fallback
-    if let Ok(exe) = std::env::current_exe() {
-        let candidate = exe
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("../../../ralph");
-        if candidate.exists() {
-            return candidate;
+    for c in repo_candidates() {
+        let p = c.join("ralph");
+        if p.exists() {
+            return p;
         }
     }
+    // Last resort: return a likely-broken path so the error message is useful
     dirs::home_dir()
         .unwrap_or_default()
-        .join("projects/von-ralph/ralph")
+        .join("von-ralph/ralph")
 }
 
 pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {
@@ -324,9 +372,15 @@ pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {
         args.push("-d".to_string());
         args.push(opts.dir.clone());
     }
-    if opts.model != "opus" && !opts.model.is_empty() {
+    let harness = if opts.harness.is_empty() { "claude" } else { opts.harness.as_str() };
+    let default_model = default_model_for_harness(harness);
+    if !opts.model.is_empty() && opts.model != default_model {
         args.push("-m".to_string());
         args.push(opts.model.clone());
+    }
+    if harness != "claude" {
+        args.push("-H".to_string());
+        args.push(harness.to_string());
     }
     if opts.marathon {
         args.push("--marathon".to_string());
@@ -375,6 +429,7 @@ pub fn restart_instance(name: &str, new_max_runs: u32) -> Result<String> {
         prompt: inst.prompt,
         max_runs: new_max_runs,
         model: inst.model,
+        harness: inst.harness,
         dir: inst.work_dir,
         name: inst.name.clone(),
         marathon: inst.marathon,

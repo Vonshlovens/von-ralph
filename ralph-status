@@ -22,6 +22,8 @@ case "${1:-list}" in
       pid=$(grep '^pid=' "$meta" | cut -d= -f2-)
       prompt=$(grep '^prompt=' "$meta" | cut -d= -f2-)
       model=$(grep '^model=' "$meta" | cut -d= -f2-)
+      harness=$(grep '^harness=' "$meta" | cut -d= -f2-)
+      [ -z "$harness" ] && harness="claude"
       started=$(grep '^started=' "$meta" | cut -d= -f2-)
       run=$(grep '^current_run=' "$meta" | cut -d= -f2-)
       max=$(grep '^max_runs=' "$meta" | cut -d= -f2-)
@@ -36,6 +38,7 @@ case "${1:-list}" in
       found=true
       echo ""
       echo "  $name  ($status, PID $pid)"
+      echo "    Harness: $harness"
       echo "    Model:   $model"
       echo "    Dir:     $work_dir"
       echo "    Prompt:  ${prompt:0:80}$([ ${#prompt} -gt 80 ] && echo '...')"
@@ -165,8 +168,10 @@ case "${1:-list}" in
     # Read settings from the dead ralph's metadata
     prompt=$(grep '^prompt=' "$meta" | cut -d= -f2-)
     model=$(grep '^model=' "$meta" | cut -d= -f2-)
+    harness=$(grep '^harness=' "$meta" | cut -d= -f2-)
     work_dir=$(grep '^work_dir=' "$meta" | cut -d= -f2-)
     marathon=$(grep '^marathon=' "$meta" | cut -d= -f2-)
+    [ -z "$harness" ] && harness="claude"
 
     # Clean up old metadata
     rm -f "$meta" "$PID_DIR/${name}.pid"
@@ -176,10 +181,11 @@ case "${1:-list}" in
     ralph_cmd=("$SCRIPT_DIR/ralph")
     ralph_cmd+=("$prompt")
     [ "$new_runs" != "0" ] && ralph_cmd+=("$new_runs")
-    ralph_cmd+=(-n "$name" -m "$model" -d "$work_dir")
+    ralph_cmd+=(-n "$name" -m "$model" -d "$work_dir" -H "$harness")
     [ "$marathon" = "true" ] && ralph_cmd+=(--marathon)
 
     echo "Restarting $name..."
+    echo "  Harness:  $harness"
     echo "  Model:    $model"
     echo "  Dir:      $work_dir"
     echo "  Runs:     $([ "$new_runs" = "0" ] && echo "unlimited" || echo "$new_runs")"

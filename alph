@@ -22,7 +22,41 @@ Update specs if needed — they are the current source of truth. Rules:
 
 When you are done, ensure you have added at least one (1) new todo to the kanban.'
 
-PROMPT="${1:-$DEFAULT_PROMPT}"
+PROMPT=""
+HARNESS="claude"
+MODEL=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -H|--harness) HARNESS="$2"; shift 2 ;;
+    -m|--model)   MODEL="$2"; shift 2 ;;
+    -h|--help)
+      cat <<'USAGE'
+Usage: alph [prompt] [options]
+Single non-looping headless run.
+
+Options:
+  -H, --harness <name>   claude (default), codex, opencode, gh
+  -m, --model <model>    Override harness default model
+USAGE
+      exit 0
+      ;;
+    *) PROMPT="$1"; shift ;;
+  esac
+done
+
+if [ -z "$PROMPT" ]; then
+  PROMPT="$DEFAULT_PROMPT"
+fi
+
+case "$HARNESS" in
+  claude)   DEFAULT_MODEL="opus" ;;
+  codex)    DEFAULT_MODEL="gpt-5.5" ;;
+  opencode) DEFAULT_MODEL="github-copilot/claude-sonnet-4.6" ;;
+  gh)       DEFAULT_MODEL="claude-sonnet-4.6" ;;
+  *) echo "Error: unknown harness '$HARNESS'"; exit 1 ;;
+esac
+[ -z "$MODEL" ] && MODEL="$DEFAULT_MODEL"
 
 cleanup() {
   echo " Stopped."
@@ -34,21 +68,76 @@ cleanup() {
 
 trap cleanup INT TERM
 
-claude -p --model=opus --dangerously-skip-permissions \
-  "$PROMPT" \
-  --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
-| jq -r '
-  if .type == "assistant" then
-    .message.content[]? |
-    if .type == "text" then
-      "💬 " + .text
-    elif .type == "tool_use" then
-      "🔧 " + .name + ": " + (.input | tostring | .[0:150])
-    else empty end
-  elif .type == "user" then
-    .message.content[]? |
-    if .type == "tool_result" then
-      "📋 " + (.content | tostring | .[0:200])
-    else empty end
-  else empty end
-'
+case "$HARNESS" in
+  claude)
+    claude -p --model="$MODEL" --dangerously-skip-permissions \
+      "$PROMPT" \
+      --print --output-format=stream-json --verbose </dev/null 2>/dev/null \
+    | jq -r '
+      if .type == "assistant" then
+        .message.content[]? |
+        if .type == "text" then
+          "💬 " + .text
+        elif .type == "tool_use" then
+          "🔧 " + .name + ": " + (.input | tostring | .[0:150])
+        else empty end
+      elif .type == "user" then
+        .message.content[]? |
+        if .type == "tool_result" then
+          "📋 " + (.content | tostring | .[0:200])
+        else empty end
+      else empty end
+    '
+    ;;
+
+  codex)
+    codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
+      -m "$MODEL" -c model_reasoning_effort="xhigh" \
+      "$PROMPT" </dev/null 2>/dev/null \
+    | jq -r '
+      if .type == "item.completed" then
+        .item as $i |
+        if $i.type == "agent_message" then "💬 " + ($i.text // "")
+        elif $i.type == "command_execution" then
+          "🔧 shell: " + (($i.command // "") | tostring | .[0:150])
+            + "\n📋 [exit " + (($i.exit_code // "?") | tostring) + "] "
+            + (($i.aggregated_output // "") | tostring | .[0:200])
+        elif $i.type == "file_change" then
+          "🔧 file_change: " + (($i.changes // []) | map((.kind // "?") + " " + (.path // "?")) | join(", "))
+        else empty end
+      else empty end
+    '
+    ;;
+
+  opencode)
+    opencode run --format json --dangerously-skip-permissions \
+      --model "$MODEL" --variant max --print-logs --log-level ERROR \
+      "$PROMPT" </dev/null 2>/dev/null \
+    | jq -r '
+      if .type == "tool_use" and (.part.state.status // "") == "completed" then
+        "🔧 " + (.part.tool // "?") + ": " + ((.part.state.input // {}) | tostring | .[0:150])
+          + "\n📋 " + ((.part.state.output // "") | tostring | .[0:200])
+      elif .type == "step_finish" then
+        "✅ step_finish reason=" + ((.part.reason // "?") | tostring)
+      else empty end
+    '
+    ;;
+
+  gh)
+    copilot -p "$PROMPT" \
+      --allow-all-tools --allow-all-paths --allow-all-urls \
+      --add-dir "$(pwd)" --model "$MODEL" --effort high \
+      --output-format json --no-color </dev/null 2>/dev/null \
+    | jq -r '
+      (.type // .event // "") as $t |
+      if ($t == "assistant" or $t == "message" or $t == "text") then
+        "💬 " + ((.text // .content // "") | tostring)
+      elif ($t == "tool_use" or $t == "tool_call") then
+        "🔧 " + ((.name // .tool // "?") | tostring) + ": "
+          + (((.input // .arguments // {}) | tostring) | .[0:150])
+      elif $t == "tool_result" then
+        "📋 " + (((.output // .content // "") | tostring) | .[0:200])
+      else empty end
+    '
+    ;;
+esac

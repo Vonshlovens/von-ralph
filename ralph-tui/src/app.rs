@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Instant;
 
 use crate::ralph::{
-    self, RalphInstance, RalphPreset, SpawnOpts,
+    self, default_model_for_harness, RalphInstance, RalphPreset, SpawnOpts, HARNESSES,
 };
 
 #[derive(PartialEq)]
@@ -106,10 +106,20 @@ impl TextInput {
     }
 }
 
+// Field order: harness, prompt, model, dir, name, max_runs, marathon
+pub const FIELD_HARNESS: usize = 0;
+pub const FIELD_PROMPT: usize = 1;
+pub const FIELD_MODEL: usize = 2;
+pub const FIELD_DIR: usize = 3;
+pub const FIELD_NAME: usize = 4;
+pub const FIELD_MAX_RUNS: usize = 5;
+pub const FIELD_MARATHON: usize = 6;
+pub const FIELD_COUNT: usize = 7;
+
 pub struct LaunchForm {
-    pub fields: [TextInput; 6], // prompt, model, dir, name, max_runs, marathon
+    pub fields: [TextInput; FIELD_COUNT],
     pub focused: usize,
-    pub labels: [&'static str; 6],
+    pub labels: [&'static str; FIELD_COUNT],
 }
 
 impl LaunchForm {
@@ -120,30 +130,48 @@ impl LaunchForm {
             .to_string();
         Self {
             fields: [
-                TextInput::empty(),              // prompt
-                TextInput::new("opus"),           // model
-                TextInput::new(&dir),             // dir
-                TextInput::empty(),              // name
-                TextInput::new("0"),             // max_runs
-                TextInput::new("false"),         // marathon
+                TextInput::new("claude"),               // harness
+                TextInput::empty(),                     // prompt
+                TextInput::new(default_model_for_harness("claude")),
+                TextInput::new(&dir),                   // dir
+                TextInput::empty(),                     // name
+                TextInput::new("0"),                    // max_runs
+                TextInput::new("false"),                // marathon
             ],
             focused: 0,
-            labels: ["Prompt", "Model", "Directory", "Name", "Max runs", "Marathon"],
+            labels: ["Harness", "Prompt", "Model", "Directory", "Name", "Max runs", "Marathon"],
         }
     }
 
     pub fn reset(&mut self) {
-        self.fields[0].clear();
-        self.fields[1].set("opus");
+        self.fields[FIELD_HARNESS].set("claude");
+        self.fields[FIELD_PROMPT].clear();
+        self.fields[FIELD_MODEL].set(default_model_for_harness("claude"));
         let dir = std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        self.fields[2].set(&dir);
-        self.fields[3].clear();
-        self.fields[4].set("0");
-        self.fields[5].set("false");
-        self.focused = 0;
+        self.fields[FIELD_DIR].set(&dir);
+        self.fields[FIELD_NAME].clear();
+        self.fields[FIELD_MAX_RUNS].set("0");
+        self.fields[FIELD_MARATHON].set("false");
+        self.focused = FIELD_PROMPT;
+    }
+
+    /// Cycle harness by +/- 1. If the model field still holds the prior harness's
+    /// default, update it to the new harness's default; otherwise leave the
+    /// user's override alone.
+    pub fn cycle_harness(&mut self, delta: i32) {
+        let current = self.fields[FIELD_HARNESS].value().to_string();
+        let prior_default = default_model_for_harness(&current).to_string();
+        let idx = HARNESSES.iter().position(|h| *h == current.as_str()).unwrap_or(0) as i32;
+        let len = HARNESSES.len() as i32;
+        let new_idx = ((idx + delta) % len + len) % len;
+        let new_harness = HARNESSES[new_idx as usize];
+        self.fields[FIELD_HARNESS].set(new_harness);
+        if self.fields[FIELD_MODEL].value() == prior_default {
+            self.fields[FIELD_MODEL].set(default_model_for_harness(new_harness));
+        }
     }
 }
 
@@ -276,12 +304,13 @@ impl App {
 
     fn do_launch(&mut self) {
         let opts = SpawnOpts {
-            prompt: self.launch_form.fields[0].value().to_string(),
-            model: self.launch_form.fields[1].value().to_string(),
-            dir: self.launch_form.fields[2].value().to_string(),
-            name: self.launch_form.fields[3].value().to_string(),
-            max_runs: self.launch_form.fields[4].value().parse().unwrap_or(0),
-            marathon: self.launch_form.fields[5].value() == "true",
+            harness: self.launch_form.fields[FIELD_HARNESS].value().to_string(),
+            prompt: self.launch_form.fields[FIELD_PROMPT].value().to_string(),
+            model: self.launch_form.fields[FIELD_MODEL].value().to_string(),
+            dir: self.launch_form.fields[FIELD_DIR].value().to_string(),
+            name: self.launch_form.fields[FIELD_NAME].value().to_string(),
+            max_runs: self.launch_form.fields[FIELD_MAX_RUNS].value().parse().unwrap_or(0),
+            marathon: self.launch_form.fields[FIELD_MARATHON].value() == "true",
         };
         match ralph::spawn_ralph(&opts) {
             Ok(msg) => self.status_msg = msg,
@@ -433,20 +462,30 @@ impl App {
                 self.status_msg.clear();
             }
             KeyCode::Tab | KeyCode::Down => {
-                self.launch_form.focused = (focused + 1) % 6;
+                self.launch_form.focused = (focused + 1) % FIELD_COUNT;
             }
             KeyCode::BackTab | KeyCode::Up => {
-                self.launch_form.focused = if focused == 0 { 5 } else { focused - 1 };
+                self.launch_form.focused = if focused == 0 { FIELD_COUNT - 1 } else { focused - 1 };
             }
             KeyCode::Enter => {
                 self.do_launch();
             }
-            KeyCode::Char(' ') if focused == 5 => {
-                // Toggle marathon
-                let new_val = if self.launch_form.fields[5].value() == "true" { "false" } else { "true" };
-                self.launch_form.fields[5].set(new_val);
+            // Harness picker: space cycles forward; left/right cycle either way.
+            KeyCode::Char(' ') if focused == FIELD_HARNESS => {
+                self.launch_form.cycle_harness(1);
             }
-            _ if focused != 5 => {
+            KeyCode::Right if focused == FIELD_HARNESS => {
+                self.launch_form.cycle_harness(1);
+            }
+            KeyCode::Left if focused == FIELD_HARNESS => {
+                self.launch_form.cycle_harness(-1);
+            }
+            // Marathon toggle
+            KeyCode::Char(' ') if focused == FIELD_MARATHON => {
+                let new_val = if self.launch_form.fields[FIELD_MARATHON].value() == "true" { "false" } else { "true" };
+                self.launch_form.fields[FIELD_MARATHON].set(new_val);
+            }
+            _ if focused != FIELD_HARNESS && focused != FIELD_MARATHON => {
                 self.launch_form.fields[focused].handle_key(&key);
             }
             _ => {}
@@ -467,12 +506,14 @@ impl App {
             KeyCode::Enter => {
                 if let Some(p) = self.presets.get(self.preset_selected).cloned() {
                     self.launch_form.reset();
-                    self.launch_form.fields[0].set(&p.prompt);
-                    self.launch_form.fields[1].set(&p.model);
-                    self.launch_form.fields[2].set(&p.dir);
-                    self.launch_form.fields[4].set(&p.max_runs.to_string());
-                    self.launch_form.fields[5].set(if p.marathon { "true" } else { "false" });
-                    self.launch_form.focused = 1; // land on Model so user can Tab → Max runs
+                    let harness = if p.harness.is_empty() { "claude" } else { p.harness.as_str() };
+                    self.launch_form.fields[FIELD_HARNESS].set(harness);
+                    self.launch_form.fields[FIELD_PROMPT].set(&p.prompt);
+                    self.launch_form.fields[FIELD_MODEL].set(&p.model);
+                    self.launch_form.fields[FIELD_DIR].set(&p.dir);
+                    self.launch_form.fields[FIELD_MAX_RUNS].set(&p.max_runs.to_string());
+                    self.launch_form.fields[FIELD_MARATHON].set(if p.marathon { "true" } else { "false" });
+                    self.launch_form.focused = FIELD_MODEL;
                     self.show_presets = false;
                     self.view = View::Launch;
                     self.status_msg.clear();
