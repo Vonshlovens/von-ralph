@@ -3,13 +3,12 @@
     {
       "id": "TASK-001",
       "title": "Fix binary path portability",
-      "description": "Replace hardcoded absolute paths to the ralph binary with a config discovery layer: check $RALPH_BIN env var first, then PATH lookup, then relative-to-binary fallback. Affects dashboard server (const RALPH_BIN in ralph.ts) and Rust TUI spawn calls in ralph.rs. Small scoped change across 2 files.",
+      "description": "Replace hardcoded absolute paths to the ralph binary with a config discovery layer: check $RALPH_BIN env var first, then PATH lookup, then relative-to-binary fallback. Affects Rust TUI spawn calls in ralph.rs.",
       "type": "short-term",
       "priority": "high",
       "status": "todo",
       "tags": ["bug", "portability", "config"],
       "files": [
-        "dashboard/src/lib/server/ralph.ts",
         "ralph-tui/src/ralph.rs"
       ],
       "depends_on": []
@@ -39,20 +38,6 @@
         "ralph-tui/src/app.rs",
         "ralph-tui/src/ui.rs",
         "ralph-tui/src/ralph.rs"
-      ],
-      "depends_on": ["TASK-002a"]
-    },
-    {
-      "id": "TASK-002c",
-      "title": "Dashboard prompt injection UI",
-      "description": "Add a form or button in the SvelteKit dashboard that posts a prompt string to a new server action, which writes it to ~/.ralph/pids/<name>.signal. Touches dashboard/src/lib/server/ralph.ts (writeSignal function + endpoint) and dashboard/src/routes/+page.svelte (UI). Depends on TASK-002a for the file protocol.",
-      "type": "short-term",
-      "priority": "medium",
-      "status": "todo",
-      "tags": ["feature", "orchestration", "ux"],
-      "files": [
-        "dashboard/src/lib/server/ralph.ts",
-        "dashboard/src/routes/+page.svelte"
       ],
       "depends_on": ["TASK-002a"]
     },
@@ -112,20 +97,6 @@
       "depends_on": ["TASK-004a"]
     },
     {
-      "id": "TASK-004c",
-      "title": "Dashboard worktree support",
-      "description": "Add an 'Isolated (worktree)' toggle to the spawn form in the SvelteKit dashboard, pass --isolated to ralph when set. Show worktree path in the instance card when active. Scope: dashboard/src/lib/server/ralph.ts (pass --isolated flag) and dashboard/src/routes/+page.svelte (toggle + display). Depends on TASK-004a.",
-      "type": "long-term",
-      "priority": "high",
-      "status": "todo",
-      "tags": ["feature", "orchestration", "git"],
-      "files": [
-        "dashboard/src/lib/server/ralph.ts",
-        "dashboard/src/routes/+page.svelte"
-      ],
-      "depends_on": ["TASK-004a"]
-    },
-    {
       "id": "TASK-005a",
       "title": "DAG pipeline spec format and validator",
       "description": "Define the YAML/JSON schema for a multi-agent pipeline: nodes (ralph configs: name, prompt, model, flags) and edges (depends_on, trigger condition, output_key). Write example pipelines and a validate-pipeline script that checks for cycles, missing node refs, and schema errors. No orchestration execution yet. Scope: new files only (schema, examples, validate script).",
@@ -166,45 +137,17 @@
     },
     {
       "id": "TASK-005d",
-      "title": "Pipeline monitoring in TUI and dashboard",
-      "description": "Show pipeline-level state in the TUI and dashboard: a pipeline view listing all nodes with status (waiting/running/done/failed) and edges visualized as a dependency tree or list. TUI adds a new tab; dashboard adds a /pipeline route or section. Reads pipeline state from a ralph-pipeline state file. Depends on TASK-005b for the state format.",
+      "title": "Pipeline monitoring in TUI",
+      "description": "Show pipeline-level state in the TUI: a pipeline view listing all nodes with status (waiting/running/done/failed) and edges visualized as a dependency tree or list. TUI adds a new tab. Reads pipeline state from a ralph-pipeline state file. Depends on TASK-005b for the state format.",
       "type": "long-term",
       "priority": "low",
       "status": "todo",
       "tags": ["feature", "orchestration", "pipeline"],
       "files": [
         "ralph-tui/src/app.rs",
-        "ralph-tui/src/ui.rs",
-        "dashboard/src/routes/+page.svelte"
+        "ralph-tui/src/ui.rs"
       ],
       "depends_on": ["TASK-005b"]
-    },
-    {
-      "id": "TASK-006a",
-      "title": "Analytics JSONL aggregation API",
-      "description": "Add a server-side analytics function in dashboard/src/lib/server/ralph.ts that scans all .jsonl files, parses token usage and tool call events, aggregates per-run and cumulative stats (input/output tokens, cost by model pricing table, tool-call frequency, success/failure counts), and exposes them via a +page.server.ts load function for the /analytics route. Depends on TASK-003a for the .jsonl files.",
-      "type": "long-term",
-      "priority": "medium",
-      "status": "todo",
-      "tags": ["feature", "observability", "dashboard", "analytics"],
-      "files": [
-        "dashboard/src/lib/server/ralph.ts",
-        "dashboard/src/routes/analytics/+page.server.ts"
-      ],
-      "depends_on": ["TASK-003a"]
-    },
-    {
-      "id": "TASK-006b",
-      "title": "Analytics frontend page",
-      "description": "Build the /analytics SvelteKit page that displays aggregated data from TASK-006a: per-run token count table, cumulative cost chart, tool-call frequency bar chart, and success/failure rate. Use plain SVG or a lightweight chart lib already in the project. Scope: dashboard/src/routes/analytics/+page.svelte only. Depends on TASK-006a for the data shape.",
-      "type": "long-term",
-      "priority": "medium",
-      "status": "todo",
-      "tags": ["feature", "observability", "dashboard", "analytics"],
-      "files": [
-        "dashboard/src/routes/analytics/+page.svelte"
-      ],
-      "depends_on": ["TASK-006a"]
     }
   ]
 }

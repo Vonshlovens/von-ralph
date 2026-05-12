@@ -76,7 +76,6 @@ The `/ralph` skill lets an interactive Claude Code session supervise ralphs:
 
 ## TODO
 
-- [ ] Web dashboard for live ralph monitoring
 - [ ] Allow on-the-fly prompt updates / interruption / check-in
 - [ ] Agent analytics — analyze agent trends to improve specs/prompts
 - [ ] Git worktree isolation per ralph (avoid conflicts)
