@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -o pipefail
+
+if ! command -v jq &>/dev/null; then
+  echo "Error: jq is not installed. Install it with: sudo apt install jq"
+  exit 1
+fi
+
+if ! command -v codex &>/dev/null; then
+  echo "Error: cody requires the 'codex' binary on PATH."
+  echo "  Install: npm install -g @openai/codex"
+  exit 1
+fi
+
+DEFAULT_PROMPT='/tackle choose a todo. If you come across tasks that go out of scope of the todo, make new kanban todos.
+
+Update specs if needed — they are the current source of truth. Rules:
+
+1. NEVER delete planned feature descriptions, API designs, or architectural blueprints from specs. If something isn'\''t implemented yet, mark it as "Planned" — don'\''t remove it. The design detail is the whole point.
+
+2. DO fix stale file paths, wrong component names, and inaccurate descriptions of *implemented* code.
+
+3. If you touch a spec, clearly separate "Implemented" sections from "Planned" sections so the next agent knows what exists vs what'\''s designed but not built.
+
+4. If something is impossible to implement or has conflicting instructions, research current practices and fix the discrepancy — but preserve the design intent.
+
+5. Never remove cross-references between specs, even to planned sections — mark them as "(Planned)" instead.
+
+When you are done, ensure you have added at least one (1) new todo to the kanban.'
+
+usage() {
+  cat <<'USAGE'
+Usage: cody [prompt] [options]
+Single non-looping headless Codex run.
+
+Options:
+  -m, --model <model>    Pin a model instead of using Codex CLI/config default
+  -h, --help             Show this help
+
+Examples:
+  cody
+  cody "Fix lint errors"
+  cody "Refactor utils" -m gpt-5.5
+
+By default, cody does not pass -m/--model to codex. That lets the Codex CLI use
+its configured/default model, so updating ~/.codex/config.toml or the CLI default
+is enough to follow the current recommended model.
+USAGE
+  exit 0
+}
+
+PROMPT=""
+MODEL=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -m|--model)
+      if [ -z "${2:-}" ]; then
+        echo "Error: $1 requires a model"
+        exit 1
+      fi
+      MODEL="$2"
+      shift 2
+      ;;
+    -h|--help) usage ;;
+    -*)
+      echo "Unknown option: $1"
+      usage
+      ;;
+    *)
+      if [ -n "$PROMPT" ]; then
+        echo "Unexpected argument: $1"
+        usage
+      fi
+      PROMPT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$PROMPT" ]; then
+  PROMPT="$DEFAULT_PROMPT"
+fi
+
+cleanup() {
+  echo " Stopped."
+  pkill -TERM -P $$ 2>/dev/null
+  sleep 0.1
+  pkill -KILL -P $$ 2>/dev/null
+  exit 0
+}
+
+trap cleanup INT TERM
+
+CODEX_CMD=(
+  codex exec
+  --json
+  --dangerously-bypass-approvals-and-sandbox
+  --skip-git-repo-check
+  -c model_reasoning_effort="xhigh"
+)
+
+if [ -n "$MODEL" ]; then
+  CODEX_CMD+=(-m "$MODEL")
+fi
+
+CODEX_CMD+=("$PROMPT")
+
+"${CODEX_CMD[@]}" </dev/null 2>/dev/null \
+| jq -r '
+  if .type == "item.completed" then
+    .item as $i |
+    if $i.type == "agent_message" then "💬 " + ($i.text // "")
+    elif $i.type == "command_execution" then
+      "🔧 shell: " + (($i.command // "") | tostring | .[0:150])
+        + "\n📋 [exit " + (($i.exit_code // "?") | tostring) + "] "
+        + (($i.aggregated_output // "") | tostring | .[0:200])
+    elif $i.type == "file_change" then
+      "🔧 file_change: " + (($i.changes // []) | map((.kind // "?") + " " + (.path // "?")) | join(", "))
+    else empty end
+  elif .type == "turn.failed" then
+    "⚠️  turn.failed: " + ((.error.message // "") | tostring | .[0:200])
+  elif .type == "error" then
+    "⚠️  error: " + ((.message // "") | tostring | .[0:200])
+  else empty end
+'

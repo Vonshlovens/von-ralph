@@ -10,6 +10,7 @@ Drive **Claude Code**, **OpenAI Codex**, **opencode** (sst/opencode), or **GitHu
 |--------|-------------|
 | `ralph` | Main loop — runs a prompt N times with logging, PID tracking, and optional rate-limit recovery. Supports multiple harnesses via `-H`. |
 | `alph` | Single headless run (no loop), same `-H` harness flag |
+| `cody` | Single headless Codex run. Uses Codex CLI/config default model unless `-m` is supplied. |
 | `ralph-marathon` | Legacy infinite loop with rate-limit sleep (use `ralph --marathon` instead) |
 | `ralph-status` | Monitor running ralphs — list, tail logs, kill instances (preserves harness on restart) |
 | `rmux` / `ralph-tui` | TUI for launching and monitoring ralphs, with a harness picker in the spawn form |
@@ -31,6 +32,9 @@ ralph-status tail kanban-worker
 
 # Kill it
 ralph-status kill kanban-worker
+
+# Single headless Codex run
+cody "Fix lint errors"
 ```
 
 ## Harnesses
@@ -48,12 +52,15 @@ JSONL event stream is parsed into a uniform log.
 
 ```bash
 ralph "Refactor utils" -H codex
+cody "Refactor utils"
+cody "Refactor utils" -m gpt-5.5
 ralph "Add tests" -H opencode -m anthropic/claude-sonnet-4-6
 ralph "Triage TODOs" -H gh
 ```
 
 Notes:
 - **codex** uses `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check` and `--json` event streaming.
+- **cody** is a Codex-only `alph` variant. By default it omits `-m/--model`, so Codex uses the CLI/config default model. Pass `-m gpt-5.5` to pin the current recommended Codex model explicitly.
 - **opencode** uses `opencode run --format json --dangerously-skip-permissions`. Its JSONL stream does *not* include assistant text events — only `tool_use` and `step_finish`. Tool output is parsed into the log; if you need the final assistant reply, run `opencode export <sessionID>`.
 - **gh** (GitHub Copilot CLI's `copilot` binary, not `gh copilot`) is invoked with `--allow-all-tools --allow-all-paths --allow-all-urls`. The JSONL schema is undocumented and shifting; the parser is best-effort with raw-line fallback.
 - Auth is per-harness (use each CLI's normal login flow before launching).
