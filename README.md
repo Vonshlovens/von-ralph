@@ -47,21 +47,21 @@ JSONL event stream is parsed into a uniform log.
 |---------|--------|---------|---------------|-----------|
 | `claude` (default) | `claude` | Claude Code | `opus` | — |
 | `codex` | `codex` | `npm i -g @openai/codex` | `gpt-5.5` | `-c model_reasoning_effort=xhigh` |
-| `opencode` | `opencode` | see https://opencode.ai | `github-copilot/claude-sonnet-4.6` | `--variant max` |
+| `opencode` | `opencode` | see https://opencode.ai | `openai/gpt-5.5` | `--variant max` |
 | `gh` | `copilot` | `npm i -g @github/copilot` | `claude-sonnet-4.6` | `--effort high` |
 
 ```bash
 ralph "Refactor utils" -H codex
 cody "Refactor utils"
 cody "Refactor utils" -m gpt-5.5
-ralph "Add tests" -H opencode -m anthropic/claude-sonnet-4-6
+ralph "Add tests" -H opencode -m openai/gpt-5.5
 ralph "Triage TODOs" -H gh
 ```
 
 Notes:
 - **codex** uses `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check` and `--json` event streaming.
 - **cody** is a Codex-only `alph` variant. By default it omits `-m/--model`, so Codex uses the CLI/config default model. Pass `-m gpt-5.5` to pin the current recommended Codex model explicitly.
-- **opencode** uses `opencode run --format json --dangerously-skip-permissions`. Its JSONL stream does *not* include assistant text events — only `tool_use` and `step_finish`. Tool output is parsed into the log; if you need the final assistant reply, run `opencode export <sessionID>`.
+- **opencode** uses `opencode run --format json --dangerously-skip-permissions`. Assistant text, tool output, step summaries, and API errors are parsed into the log.
 - **gh** (GitHub Copilot CLI's `copilot` binary, not `gh copilot`) is invoked with `--allow-all-tools --allow-all-paths --allow-all-urls`. The JSONL schema is undocumented and shifting; the parser is best-effort with raw-line fallback.
 - Auth is per-harness (use each CLI's normal login flow before launching).
 

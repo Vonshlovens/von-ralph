@@ -42,7 +42,7 @@ Options:
 Harness defaults (override with -m):
   claude    opus
   codex     gpt-5.5            (reasoning: xhigh)
-  opencode  github-copilot/claude-sonnet-4.6   (variant: max)
+  opencode  openai/gpt-5.5                    (variant: max)
   gh        claude-sonnet-4.6  (effort:    high)
 
 Examples:
@@ -51,7 +51,7 @@ Examples:
   ralph "Fix all lint errors" -d ~/my-project -n lint-fixer
   ralph --marathon                                  # Infinite with rate-limit recovery
   ralph "Refactor utils" -H codex                   # Drive OpenAI codex instead
-  ralph "Add tests" -H opencode -m anthropic/claude-sonnet-4-6
+  ralph "Add tests" -H opencode -m openai/gpt-5.5
 USAGE
   exit 0
 }
@@ -107,7 +107,7 @@ fi
 case "$HARNESS" in
   claude)   DEFAULT_MODEL="opus" ;;
   codex)    DEFAULT_MODEL="gpt-5.5" ;;
-  opencode) DEFAULT_MODEL="github-copilot/claude-sonnet-4.6" ;;
+  opencode) DEFAULT_MODEL="openai/gpt-5.5" ;;
   gh)       DEFAULT_MODEL="claude-sonnet-4.6" ;;
   *)
     echo "Error: unknown harness '$HARNESS' (expected: claude, codex, opencode, gh)"
@@ -179,7 +179,7 @@ log() {
 cleanup() {
   # Prevent re-entry from repeated Ctrl-C
   trap - INT TERM
-  log "🛑 Ralph '$RALPH_NAME' stopped after $RUN_COUNT runs."
+  log "🛑 Ralph '$RALPH_NAME' stopped after $RUNS_COMPLETED runs."
   rm -f "$PID_FILE"
   # Kill child processes only (not ourselves)
   pkill -TERM -P $$ 2>/dev/null
@@ -253,7 +253,9 @@ run_harness() {
         --print-logs --log-level ERROR \
         "$prompt" </dev/null 2>/dev/null \
       | jq --unbuffered -r '
-        if .type == "tool_use" then
+        if .type == "text" then
+          "💬 " + ((.part.text // .text // "") | tostring)
+        elif .type == "tool_use" then
           .part as $p |
           if ($p.state.status // "") == "completed" then
             "🔧 " + ($p.tool // "?") + ": " + (($p.state.input // {}) | tostring | .[0:150])
@@ -265,6 +267,8 @@ run_harness() {
             + " out=" + ((.part.tokens.output // 0) | tostring) + ")"
         elif .type == "step_start" then
           "▶️  step_start"
+        elif .type == "error" then
+          "⚠️  error: " + ((.error.data.message // .error.message // .error.name // "") | tostring | .[0:300])
         else empty end
       '
       ;;
@@ -283,17 +287,24 @@ run_harness() {
       | jq --unbuffered -r '
         . as $e |
         (.type // .event // "") as $t |
-        if ($t == "assistant" or $t == "message" or $t == "text") then
+        if $t == "assistant.message" then
+          "💬 " + ((.data.content // "") | tostring)
+        elif ($t == "assistant.message_delta") then
+          empty
+        elif ($t == "result") then
+          "✅ result exit=" + ((.exitCode // .data.exitCode // "?") | tostring)
+        elif ($t == "assistant" or $t == "message" or $t == "text") then
           "💬 " + ((.text // .content // "") | tostring)
-        elif ($t == "tool_use" or $t == "tool_call") then
+        elif ($t == "tool_use" or $t == "tool_call" or $t == "tool.call") then
           "🔧 " + ((.name // .tool // "?") | tostring) + ": "
             + (((.input // .arguments // {}) | tostring) | .[0:150])
-        elif $t == "tool_result" then
+        elif ($t == "tool_result" or $t == "tool.result") then
           "📋 " + (((.output // .content // "") | tostring) | .[0:200])
         elif ($t == "error" or .error) then
           "⚠️  " + (((.error // .message // "") | tostring) | .[0:200])
+        elif ($t | startswith("session.")) or ($t == "user.message") or ($t == "assistant.turn_start") or ($t == "assistant.turn_end") or ($t == "assistant.message_start") then
+          empty
         else
-          # Unknown shape — surface it so we can adapt
           "ℹ️  " + ($e | tostring | .[0:200])
         end
       '
@@ -316,6 +327,7 @@ log "📝 Prompt: ${PROMPT:0:120}$([ ${#PROMPT} -gt 120 ] && echo '...')"
 [ "$NO_LOG" = false ] && log "📄 Log: $LOG_FILE"
 
 RUN_COUNT=0
+RUNS_COMPLETED=0
 
 while true; do
   RUN_COUNT=$((RUN_COUNT + 1))
@@ -342,6 +354,7 @@ while true; do
   rm -f "$OUTPUT_TMP"
 
   log "--- RUN $RUN_COUNT COMPLETE ---"
+  RUNS_COMPLETED=$RUN_COUNT
 
   # Check for errors
   if echo "$OUTPUT" | grep -q "You've hit your limit"; then
