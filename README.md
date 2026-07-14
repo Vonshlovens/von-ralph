@@ -81,6 +81,13 @@ The `/ralph` skill lets an interactive Claude Code session supervise ralphs:
   pids/       # PID files + metadata for monitoring
 ```
 
+## Design direction
+
+See [AI workflow direction](docs/ai-workflow-direction.md) for the current
+research and roadmap covering worktree isolation, observability, supervision,
+Beads integration boundaries, and lessons from Firstmate, Gas Town/Gas City,
+and Geoffrey Huntley's `sup` prototype.
+
 ## TODO
 
 - [ ] Allow on-the-fly prompt updates / interruption / check-in
