@@ -1,6 +1,6 @@
 /**
  * Read-only view of the bash runner's `~/.ralph/pids/*.meta` files, so
- * `ralph-next status` shows every ralph on the machine during the migration.
+ * `ralph status` shows every ralph on the machine during the migration.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";

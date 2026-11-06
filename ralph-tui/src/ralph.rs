@@ -21,9 +21,9 @@ pub struct RalphInstance {
     pub alive: bool,
     pub log_path: PathBuf,
     pub has_log: bool,
-    /// Run id for ralph-next runs (SQLite state); None for legacy bash ralphs.
+    /// Run id for ralph runs (SQLite state); None for legacy bash ralphs.
     pub run_id: Option<String>,
-    /// running | finished | failed | stopped (ralph-next), or "legacy".
+    /// running | finished | failed | stopped (ralph), or "legacy".
     pub status: String,
     pub stop_reason: Option<String>,
 }
@@ -223,14 +223,14 @@ fn parse_meta(path: &Path) -> Option<RalphInstance> {
     })
 }
 
-/// ralph-next state root: $RALPH_HOME or ~/.ralph/v2 (see docs/state-schema.md).
+/// ralph state root: $RALPH_HOME or ~/.ralph/v2 (see docs/state-schema.md).
 fn v2_root() -> PathBuf {
     std::env::var_os("RALPH_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| ralph_dir().join("v2"))
 }
 
-/// Latest run per name from ralph-next's SQLite database (read-only).
+/// Latest run per name from ralph's SQLite database (read-only).
 fn list_v2() -> Vec<RalphInstance> {
     let db = v2_root().join("ralph.db");
     if !db.exists() {
@@ -294,7 +294,7 @@ pub fn list_instances() -> Vec<RalphInstance> {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("meta") {
                 if let Some(inst) = parse_meta(&path) {
-                    // A dead legacy record shadowed by a ralph-next run of the same name is noise.
+                    // A dead legacy record shadowed by a ralph run of the same name is noise.
                     if known_names.contains(&inst.name) && !inst.alive {
                         continue;
                     }
@@ -357,7 +357,7 @@ pub fn list_instances() -> Vec<RalphInstance> {
         }
     }
 
-    // Sort: alive first, then ralph-next runs (newest first), then legacy by name
+    // Sort: alive first, then ralph runs (newest first), then legacy by name
     instances.sort_by(|a, b| {
         b.alive
             .cmp(&a.alive)
@@ -371,7 +371,7 @@ pub fn list_instances() -> Vec<RalphInstance> {
 pub fn kill_instance(name: &str) -> Result<String> {
     if let Some(inst) = find_v2(name) {
         if inst.status == "running" {
-            return run_next(&["stop", name]);
+            return run_ralph(&["stop", name]);
         }
     }
     let meta_path = pid_dir().join(format!("{}.meta", name));
@@ -404,7 +404,7 @@ pub fn kill_instance(name: &str) -> Result<String> {
 
 pub fn clean_dead() -> Vec<String> {
     let mut cleaned = Vec::new();
-    if let Ok(out) = run_next(&["clean"]) {
+    if let Ok(out) = run_ralph(&["clean"]) {
         cleaned.extend(
             out.lines()
                 .filter_map(|l| l.trim().strip_prefix("marked crashed: "))
@@ -432,32 +432,32 @@ fn clean_meta(name: &str) {
     let _ = fs::remove_file(pid_dir().join(format!("{}.pid", name)));
 }
 
-/// Path to the ralph-next CLI (bin/ralph-next in the repo).
-pub fn ralph_next_path() -> PathBuf {
-    if let Ok(p) = std::env::var("RALPH_NEXT_BIN") {
+/// Path to the ralph CLI (bin/ralph in the repo).
+pub fn ralph_bin_path() -> PathBuf {
+    if let Ok(p) = std::env::var("RALPH_BIN") {
         return PathBuf::from(p);
     }
     for c in repo_candidates() {
-        let p = c.join("bin/ralph-next");
+        let p = c.join("bin/ralph");
         if p.exists() {
             return p;
         }
     }
     // Last resort: return a likely-broken path so the error message is useful
-    dirs::home_dir().unwrap_or_default().join("von/ralph/bin/ralph-next")
+    dirs::home_dir().unwrap_or_default().join("von/ralph/bin/ralph")
 }
 
-/// Run a ralph-next subcommand and return its last output line (or the error text).
-fn run_next(args: &[&str]) -> Result<String> {
-    let bin = ralph_next_path();
+/// Run a ralph subcommand and return its last output line (or the error text).
+fn run_ralph(args: &[&str]) -> Result<String> {
+    let bin = ralph_bin_path();
     if !bin.exists() {
-        anyhow::bail!("ralph-next not found at {}", bin.display());
+        anyhow::bail!("ralph not found at {}", bin.display());
     }
     let out = Command::new(&bin)
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .context("Failed to run ralph-next")?;
+        .context("Failed to run ralph")?;
     let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
     let stdout = text(&out.stdout);
     if out.status.success() {
@@ -465,7 +465,7 @@ fn run_next(args: &[&str]) -> Result<String> {
     } else {
         let stderr = text(&out.stderr);
         let msg = if stderr.is_empty() { stdout } else { stderr };
-        anyhow::bail!("{}", msg.lines().find(|l| !l.trim().is_empty()).unwrap_or("ralph-next failed"))
+        anyhow::bail!("{}", msg.lines().find(|l| !l.trim().is_empty()).unwrap_or("ralph failed"))
     }
 }
 
@@ -489,8 +489,8 @@ pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {
         args.push("--marathon");
     }
     args.push(&opts.prompt);
-    let out = run_next(&args)?;
-    // `ralph-next run --detach` prints "🚀 <name> started (run …)" then the log path.
+    let out = run_ralph(&args)?;
+    // `ralph run --detach` prints "🚀 <name> started (run …)" then the log path.
     Ok(out.replace("   log ", "log: "))
 }
 
@@ -498,13 +498,13 @@ pub fn steer_instance(name: &str, text: &str) -> Result<String> {
     if text.trim().is_empty() {
         anyhow::bail!("steer text is empty");
     }
-    run_next(&["steer", name, text])
+    run_ralph(&["steer", name, text])
 }
 
 pub fn restart_instance(name: &str, new_max_runs: u32) -> Result<String> {
     if find_v2(name).is_some() {
         let max = new_max_runs.to_string();
-        return run_next(&["restart", name, "-N", &max]);
+        return run_ralph(&["restart", name, "-N", &max]);
     }
     let meta_path = pid_dir().join(format!("{}.meta", name));
     if !meta_path.exists() {

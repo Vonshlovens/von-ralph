@@ -230,7 +230,7 @@ Both backends are required, not optional. Selection is automatic unless
   priority, depends_on, spec_refs, acceptance}]}`) so agents and the runner
   never have to parse prose to know what is open. The runner validates the
   sidecar after every iteration; the markdown is regenerated from it so the
-  two cannot silently drift. Agents edit it with `ralph-next task …`
+  two cannot silently drift. Agents edit it with `ralph task …`
   (`list --ready`, `add`, `start`, `done --note`, `block --note`, `learn`),
   the markdown backend's equivalent of `bd`.
 
@@ -337,8 +337,11 @@ One long-running local process (systemd user unit) exposing:
   Runs directly with Node's type stripping (`node src/bin.ts`), so no build
   step is needed for the CLI.
 - **Keep the Rust TUI**, re-point it at the new state dir / `ralph serve`.
-- **Keep the bash entry points** as thin compatibility shims during migration
-  (`ralph "<prompt>" 10 -d …` keeps working → `ralph run`).
+- **Retire the bash entry points** (done 2026-11-06, after M2): the Effect CLI
+  is `ralph` (it was `ralph-next` while it grew beside v1); the bash scripts
+  live in `legacy/` (`ralph-v1`, `alph`, `cody`, `ralph-marathon`,
+  `ralph-status`). The v1 call shape `ralph "<prompt>" 10 -d …` is now
+  `ralph run "<prompt>" -N 10 -d …`; `ralph status` still lists live v1 loops.
 - Update the `/ralph` skill to teach the process (spec → plan → build →
   watch → sign), not just spawn/kill.
 
@@ -346,6 +349,8 @@ One long-running local process (systemd user unit) exposing:
 
 Progress (2026-11-06):
 
+- **Renamed** — `ralph-next` → `ralph` (0.5.0); bash scripts moved to
+  `legacy/`.
 - **M2 done** — the process as commands: `init` (config, prompts, AGENTS.md
   - CLAUDE.md import, specs index, detected validate commands), `spec`
     (interactive Claude Code / Codex session), `reverse`, `plan`, `build`,
@@ -363,14 +368,14 @@ Progress (2026-11-06):
   discovery includes `~/von/ralph`, preset path fixed, and **codex default
   model removed** (codex now rejects an explicit `gpt-5.5` on ChatGPT-account
   logins; it uses its configured default unless `-m` is given).
-- **M1 done** — `bin/ralph-next` (Effect 4.0.6, Vite+ 1.4.0, pnpm):
+- **M1 done** — `bin/ralph` (Effect 4.0.6, Vite+ 1.4.0, pnpm):
   `run [--detach]`, `status`, `show`, `tail [-f]`, `steer`, `stop
   [--graceful]`, `restart`, `clean`, `doctor`; harnesses claude (bg
   session), codex, opencode, gh (`claude -p` dropped); SQLite state with run
   history; per-iteration timeout; steering consumed between iterations;
   interrupted iterations recorded; live legacy bash ralphs shown in `status`.
-  TUI reads the database, launches/stops/restarts through `ralph-next`, and
-  steers with `s`. `/ralph` skill rewritten for `ralph-next`. 16 tests.
+  TUI reads the database, launches/stops/restarts through `ralph`, and
+  steers with `s`. `/ralph` skill rewritten for `ralph`. 16 tests.
   Verified live with codex: detach, steer → next prompt, graceful + hard
   stop, restart, TUI steer/kill. Claude bg sessions still blocked by the local
   proxy (stops with `auth_failed`); opencode and gh not yet live-tested.

@@ -1,5 +1,5 @@
 /**
- * `ralph-next report <name>`: a read-only summary of what a run did — commits,
+ * `ralph report <name>`: a read-only summary of what a run did — commits,
  * files, validation, plan delta, cost, and anything that needs a human.
  */
 import { Console, Effect } from "effect";

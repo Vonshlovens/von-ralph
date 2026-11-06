@@ -39,10 +39,7 @@ import {
 import * as T from "./templates.ts";
 
 /** Absolute path of the CLI shim, for prompts (`$R task …`). */
-export const RALPH_BIN = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../bin/ralph-next",
-);
+export const RALPH_BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bin/ralph");
 
 export const SENTINEL = /<promise>\s*COMPLETE\s*<\/promise>/i;
 
@@ -270,7 +267,7 @@ export const modePolicy = (o: ModeOptions): ModePolicy => {
           type: "notice",
           text:
             snap.total === 0
-              ? "the plan is empty: run `ralph-next plan` first"
+              ? "the plan is empty: run `ralph plan` first"
               : "every plan item is already done",
         });
         return "plan_complete" as StopReason;
@@ -388,6 +385,6 @@ export const ensureInitialized = (p: ProjectConfig, mode: string) =>
     : Effect.fail(
         new StateError({
           path: p.dir,
-          reason: `not a ralph project (no .ralph/ralph.toml). Run \`ralph-next init -d ${p.dir}\` before \`${mode}\`.`,
+          reason: `not a ralph project (no .ralph/ralph.toml). Run \`ralph init -d ${p.dir}\` before \`${mode}\`.`,
         }),
       );

@@ -1,6 +1,6 @@
-# ralph-next state schema
+# ralph state schema
 
-`ralph-next` keeps its state in SQLite (WAL mode) at `$RALPH_HOME/ralph.db`,
+`ralph` keeps its state in SQLite (WAL mode) at `$RALPH_HOME/ralph.db`,
 default `~/.ralph/v2/ralph.db`. The Rust TUI reads it directly (read-only), so
 this schema is a contract. Change it only by adding a migration in
 `src/store.ts`, and update this file and `ralph-tui/src/ralph.rs` at the same
@@ -43,7 +43,7 @@ ends; "the ralph called X" means its most recent run (`MAX(started_at)`).
 | `scope`                     | TEXT NULL | `--scope` text for process modes (0002)                                                                                                                                                                                                                                   |
 | `started_at`, `updated_at`  | TEXT      | ISO-8601 UTC                                                                                                                                                                                                                                                              |
 
-`status = 'running'` with a dead `pid` means the runner crashed; `ralph-next
+`status = 'running'` with a dead `pid` means the runner crashed; `ralph
 clean` (or reusing the name) marks it `failed` / `crashed`.
 
 ### `iterations`

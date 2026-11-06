@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * ralph-next: the Effect-based Ralph runner. Runs directly with Node's type
- * stripping: `node src/bin.ts …` (or the `bin/ralph-next` shim).
+ * ralph: the Effect-based Ralph runner. Runs directly with Node's type
+ * stripping: `node src/bin.ts …` (or the `bin/ralph` shim).
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Layer, Option, Schedule } from "effect";
@@ -21,7 +21,7 @@ import { harnesses } from "./registry.ts";
 import * as StoreModule from "./store.ts";
 import { NAME_RE, Store, formatLogLine, isAlive } from "./store.ts";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const run = Command.make(
   "run",
@@ -130,8 +130,7 @@ const run = Command.make(
 );
 
 const stateLabel = (r: Instance) => {
-  if (r.status === "running")
-    return isAlive(r.pid) ? "🟢 running" : "🔴 dead (run `ralph-next clean`)";
+  if (r.status === "running") return isAlive(r.pid) ? "🟢 running" : "🔴 dead (run `ralph clean`)";
   return `⚪ ${r.status}${r.stopReason === null ? "" : ` (${r.stopReason})`}`;
 };
 
@@ -185,14 +184,14 @@ const status = Command.make(
         const max = l.maxRuns > 0 ? `/${l.maxRuns}` : "";
         yield* Console.log(
           [
-            `${l.name}  ${l.alive ? "🟢 running" : "🔴 dead"} (legacy bash ralph)  pid ${l.pid}`,
+            `${l.name}  ${l.alive ? "🟢 running" : "🔴 dead"} (ralph-v1 bash loop)  pid ${l.pid}`,
             `  harness ${l.harness} · dir ${l.dir} · run ${l.currentRun}${max}`,
             `  log     ${l.logPath}`,
           ].join("\n"),
         );
       }
     }),
-).pipe(Command.withDescription("List ralphs (new runner, plus live legacy bash ralphs)"));
+).pipe(Command.withDescription("List ralphs (plus any live ralph-v1 bash loops)"));
 
 const show = Command.make(
   "show",
@@ -420,7 +419,7 @@ const doctor = Command.make("doctor", {}, () =>
   }),
 ).pipe(Command.withDescription("Check which harness CLIs are installed"));
 
-const root = Command.make("ralph-next").pipe(
+const root = Command.make("ralph").pipe(
   Command.withDescription("Headless agent loops (Ralph Wiggum technique)"),
   Command.withSubcommands([
     init,
@@ -449,7 +448,7 @@ const MainLive = StoreModule.layer().pipe(Layer.provideMerge(NodeServices.layer)
 /** Our own errors are expected outcomes: one clean line on stderr, exit 1. */
 const report1 = (e: { readonly message: string }) =>
   Effect.sync(() => {
-    process.stderr.write(`ralph-next: ${e.message}\n`);
+    process.stderr.write(`ralph: ${e.message}\n`);
     process.exitCode = 1;
   });
 

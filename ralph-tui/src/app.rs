@@ -181,7 +181,7 @@ pub struct RestartForm {
     pub max_runs: TextInput,
 }
 
-/// Note for a running ralph-next run; added to its next iteration's prompt.
+/// Note for a running ralph run; added to its next iteration's prompt.
 pub struct SteerForm {
     pub instance_name: String,
     pub text: TextInput,
@@ -414,7 +414,7 @@ impl App {
             KeyCode::Char('s') => {
                 if let Some(inst) = self.selected_instance() {
                     if inst.run_id.is_none() {
-                        self.status_msg = format!("{} is a legacy bash ralph — steering needs ralph-next", inst.name);
+                        self.status_msg = format!("{} is a legacy bash ralph (ralph-v1) and cannot be steered", inst.name);
                     } else if !inst.alive {
                         self.status_msg = format!("{} is not running", inst.name);
                     } else {

@@ -1,10 +1,10 @@
 {
   "name": "von-ralph",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Headless agent loops (Ralph Wiggum technique) across Claude Code, Codex, OpenCode and Copilot",
   "bin": {
-    "ralph-next": "./bin/ralph-next"
+    "ralph": "./bin/ralph"
   },
   "type": "module",
   "scripts": {

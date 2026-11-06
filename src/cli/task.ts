@@ -1,5 +1,5 @@
 /**
- * `ralph-next task …`: the markdown plan backend's CLI, for agents and humans.
+ * `ralph task …`: the markdown plan backend's CLI, for agents and humans.
  * Every write validates `.ralph/plan.json` and regenerates the markdown, so the
  * two cannot drift. Beads projects use `bd` instead.
  */
@@ -44,7 +44,7 @@ const project = (d: Option.Option<string>) =>
     if (!fs.existsSync(ralphDir(dir))) {
       return yield* new StateError({
         path: path.resolve(Option.getOrElse(d, () => process.cwd())),
-        reason: "no .ralph/ here or above: run `ralph-next init`",
+        reason: "no .ralph/ here or above: run `ralph init`",
       });
     }
     if (resolveBackend(p) === "beads") {

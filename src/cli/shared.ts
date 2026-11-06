@@ -60,7 +60,7 @@ export const spawnDetached = (argv: ReadonlyArray<string>, name: string, cwd: st
     }
     const r = started.value;
     yield* Console.log(
-      `🚀 ${r.name} started (${r.mode}, run ${r.id}, pid ${r.pid})\n   log ${store.logPath(r.id)}\n   watch: ralph-next watch ${r.name}`,
+      `🚀 ${r.name} started (${r.mode}, run ${r.id}, pid ${r.pid})\n   log ${store.logPath(r.id)}\n   watch: ralph watch ${r.name}`,
     );
   });
 

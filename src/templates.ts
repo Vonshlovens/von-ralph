@@ -6,7 +6,7 @@
  * PROMPT_build.md), made harness-neutral (claude, codex, opencode, copilot)
  * and backend-neutral: `{{plan_instructions}}` is filled with the markdown or
  * Beads instructions at run time. Prompts are re-read every iteration, so
- * edits (and `ralph-next sign`) take effect on the next iteration.
+ * edits (and `ralph sign`) take effect on the next iteration.
  *
  * Variables: {{goal}} {{source}} {{scope}} {{plan_file}} {{plan_instructions}}
  * {{plan_commit}} {{validate}} {{commit}} {{ralph}} {{topic}}
@@ -95,7 +95,7 @@ context: the plan, the specs, the code, and git history are the only memory.
 
 ## Signs
 
-Guardrails added while tuning this loop (\`ralph-next sign\`). The more 9s, the
+Guardrails added while tuning this loop (\`ralph sign\`). The more 9s, the
 more important.
 
 99999. When you write documentation or comments, capture the why.
@@ -154,7 +154,7 @@ specs, and they are the most expensive place to get things wrong.
 6. Read each spec back and have the human confirm or correct it before moving on.
 
 Do not write code or a plan. When the specs are done, suggest running
-\`ralph-next plan\`.
+\`ralph plan\`.
 `;
 
 export const SPECS_README = `# Specs
@@ -195,7 +195,7 @@ export const ralphToml = (o: {
   readonly goal: string | null;
   readonly source: ReadonlyArray<string>;
   readonly validate: ReadonlyArray<string>;
-}) => `# Ralph project config (ralph-next). CLI flags override these.
+}) => `# Ralph project config. CLI flags override these.
 
 harness = ${tomlString(o.harness)}   # claude | codex | opencode | gh
 # model = "opus"        # omit to use the harness default

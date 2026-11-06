@@ -178,7 +178,7 @@ case "${1:-list}" in
 
     # Build the ralph command
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    ralph_cmd=("$SCRIPT_DIR/ralph")
+    ralph_cmd=("$SCRIPT_DIR/ralph-v1")
     ralph_cmd+=("$prompt")
     [ "$new_runs" != "0" ] && ralph_cmd+=("$new_runs")
     ralph_cmd+=(-n "$name" -m "$model" -d "$work_dir" -H "$harness")
