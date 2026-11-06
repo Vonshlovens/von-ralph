@@ -6,6 +6,8 @@ import { Console, Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type { IterationRecord, RalphEvent } from "../domain.ts";
 import * as Git from "../git.ts";
+import { readPlan } from "../plan.ts";
+import { loadProject, resolveBackend } from "../project.ts";
 import { Store } from "../store.ts";
 import { nameArg } from "./shared.ts";
 
@@ -56,6 +58,22 @@ export const buildReport = (nameOrId: string) =>
       needsHuman.push("the last validation failed");
     if (run.stopReason === "plan_exhausted")
       needsHuman.push("open plan items remain but none are ready (blocked or waiting)");
+    // Blocked items carry the question for the human (markdown plan; Beads: `bd blocked`).
+    if (run.mode === "plan" || run.mode === "build") {
+      const project = yield* loadProject(run.dir).pipe(Effect.option);
+      if (project._tag === "Some" && resolveBackend(project.value) === "markdown") {
+        const plan = yield* readPlan(run.dir).pipe(Effect.option);
+        if (plan._tag === "Some") {
+          for (const it of plan.value.items.filter((i) => i.status === "blocked")) {
+            needsHuman.push(
+              `${it.id} blocked: ${it.title}${it.notes.length > 0 ? ` — ${it.notes.at(-1)}` : ""}`,
+            );
+          }
+        }
+      } else if (project._tag === "Some") {
+        needsHuman.push("see `bd blocked` for beads waiting on a human");
+      }
+    }
     if (run.stopReason === "no_progress") needsHuman.push("the loop stopped making progress");
     if (
       run.stopReason === "auth_failed" ||

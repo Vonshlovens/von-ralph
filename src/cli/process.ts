@@ -400,7 +400,7 @@ export const sign = Command.make(
       fs.writeFileSync(file, text);
       const live = run !== null && run.status === "running";
       yield* Console.log(
-        `🪧 added sign ${nines.length} to ${path.relative(process.cwd(), file) || file}${
+        `🪧 added sign ${nines}. to ${path.relative(process.cwd(), file) || file}${
           live ? `; ${run.name} picks it up at its next iteration` : ""
         }`,
       );
