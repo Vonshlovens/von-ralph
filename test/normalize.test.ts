@@ -73,21 +73,6 @@ describe("claude transcript / stream-json", () => {
       },
     ]);
   });
-
-  it("handles the claude -p result event", () => {
-    expect(
-      claudeParser()({
-        type: "result",
-        subtype: "success",
-        is_error: false,
-        total_cost_usd: 0.12,
-        duration_ms: 900,
-      }),
-    ).toEqual([
-      { type: "usage", totalCostUsd: 0.12 },
-      { type: "turn_end", durationMs: 900 },
-    ]);
-  });
 });
 
 describe("codex", () => {

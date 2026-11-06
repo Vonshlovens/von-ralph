@@ -47,6 +47,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_list(frame, app);
             render_restart(frame, app);
         }
+        View::Steer => {
+            render_list(frame, app);
+            render_steer(frame, app);
+        }
     }
     if app.show_presets {
         render_presets_popup(frame, app);
@@ -88,10 +92,16 @@ fn render_list(frame: &mut Frame, app: &mut App) {
         .instances
         .iter()
         .map(|inst| {
-            let status = if inst.alive {
-                Cell::from(" alive").style(Style::default().fg(Color::Green))
-            } else {
-                Cell::from(" dead").style(Style::default().fg(Color::Red))
+            let status = match (inst.alive, inst.status.as_str()) {
+                (true, _) => Cell::from(" alive").style(Style::default().fg(Color::Green)),
+                (false, "finished") => Cell::from(" done").style(Style::default().fg(Color::Blue)),
+                (false, "stopped") => Cell::from(" stopped").style(Style::default().fg(Color::Yellow)),
+                (false, "failed") => Cell::from(format!(
+                    " {}",
+                    inst.stop_reason.as_deref().unwrap_or("failed")
+                ))
+                .style(Style::default().fg(Color::Red)),
+                _ => Cell::from(" dead").style(Style::default().fg(Color::Red)),
             };
             let run = if inst.max_runs > 0 {
                 format!("{}/{}", inst.current_run, inst.max_runs)
@@ -170,6 +180,8 @@ fn render_list(frame: &mut Frame, app: &mut App) {
             Span::raw(" new  "),
             Span::styled("R", Style::default().fg(Color::Cyan)),
             Span::raw(" restart  "),
+            Span::styled("s", Style::default().fg(Color::Cyan)),
+            Span::raw(" steer  "),
             Span::styled("c", Style::default().fg(Color::Cyan)),
             Span::raw(" clean  "),
             Span::styled("r", Style::default().fg(Color::Cyan)),
@@ -400,6 +412,52 @@ fn render_restart(frame: &mut Frame, app: &mut App) {
     let bar = Line::from(vec![
         Span::styled(" Enter", Style::default().fg(Color::Cyan)),
         Span::raw(" restart  "),
+        Span::styled("Esc", Style::default().fg(Color::Cyan)),
+        Span::raw(" cancel"),
+    ]);
+    frame.render_widget(Paragraph::new(bar), chunks[4]);
+}
+
+fn render_steer(frame: &mut Frame, app: &mut App) {
+    let area = centered_rect(60, 30, frame.area());
+    frame.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // title
+            Constraint::Length(3), // info
+            Constraint::Length(3), // note input
+            Constraint::Min(0),    // spacer
+            Constraint::Length(1), // keybinds
+        ])
+        .split(area);
+
+    let title = Line::from(Span::styled(
+        " STEER RALPH ",
+        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
+    ));
+    frame.render_widget(Paragraph::new(title), chunks[0]);
+
+    let info = Paragraph::new(format!(
+        " {} — the note is added to its next iteration's prompt",
+        app.steer_form.instance_name
+    ))
+    .block(Block::default().borders(Borders::ALL).title(" Instance "));
+    frame.render_widget(info, chunks[1]);
+
+    let content = render_input_line(&app.steer_form.text, true);
+    let input = Paragraph::new(content).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Note "),
+    );
+    frame.render_widget(input, chunks[2]);
+
+    let bar = Line::from(vec![
+        Span::styled(" Enter", Style::default().fg(Color::Cyan)),
+        Span::raw(" send  "),
         Span::styled("Esc", Style::default().fg(Color::Cyan)),
         Span::raw(" cancel"),
     ]);

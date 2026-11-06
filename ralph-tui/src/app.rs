@@ -11,6 +11,7 @@ pub enum View {
     Log,
     Launch,
     Restart,
+    Steer,
 }
 
 pub struct TextInput {
@@ -180,6 +181,12 @@ pub struct RestartForm {
     pub max_runs: TextInput,
 }
 
+/// Note for a running ralph-next run; added to its next iteration's prompt.
+pub struct SteerForm {
+    pub instance_name: String,
+    pub text: TextInput,
+}
+
 pub struct App {
     pub view: View,
     pub instances: Vec<RalphInstance>,
@@ -191,6 +198,7 @@ pub struct App {
     pub log_instance_name: String,
     pub launch_form: LaunchForm,
     pub restart_form: RestartForm,
+    pub steer_form: SteerForm,
     pub should_quit: bool,
     pub status_msg: String,
     pub confirm_kill: Option<(String, Instant)>,
@@ -212,6 +220,7 @@ impl App {
             log_instance_name: String::new(),
             launch_form: LaunchForm::new(),
             restart_form: RestartForm { instance_name: String::new(), max_runs: TextInput::new("0") },
+            steer_form: SteerForm { instance_name: String::new(), text: TextInput::empty() },
             should_quit: false,
             status_msg: String::new(),
             confirm_kill: None,
@@ -238,7 +247,7 @@ impl App {
         match self.view {
             View::List => self.refresh_instances(),
             View::Log => self.refresh_log(),
-            View::Launch | View::Restart => {}
+            View::Launch | View::Restart | View::Steer => {}
         }
         // Expire kill confirmation after 3 seconds
         if let Some((_, when)) = &self.confirm_kill {
@@ -338,6 +347,7 @@ impl App {
             View::Log => self.handle_log_key(key),
             View::Launch => self.handle_launch_key(key),
             View::Restart => self.handle_restart_key(key),
+            View::Steer => self.handle_steer_key(key),
         }
     }
 
@@ -396,6 +406,21 @@ impl App {
                         self.restart_form.instance_name = inst.name.clone();
                         self.restart_form.max_runs = TextInput::new("0");
                         self.view = View::Restart;
+                        self.status_msg.clear();
+                        self.confirm_kill = None;
+                    }
+                }
+            }
+            KeyCode::Char('s') => {
+                if let Some(inst) = self.selected_instance() {
+                    if inst.run_id.is_none() {
+                        self.status_msg = format!("{} is a legacy bash ralph — steering needs ralph-next", inst.name);
+                    } else if !inst.alive {
+                        self.status_msg = format!("{} is not running", inst.name);
+                    } else {
+                        self.steer_form.instance_name = inst.name.clone();
+                        self.steer_form.text.clear();
+                        self.view = View::Steer;
                         self.status_msg.clear();
                         self.confirm_kill = None;
                     }
@@ -563,5 +588,25 @@ impl App {
         }
         self.view = View::List;
         self.refresh_instances();
+    }
+
+    fn handle_steer_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.view = View::List;
+                self.status_msg.clear();
+            }
+            KeyCode::Enter => {
+                let name = self.steer_form.instance_name.clone();
+                match ralph::steer_instance(&name, self.steer_form.text.value()) {
+                    Ok(msg) => self.status_msg = msg,
+                    Err(e) => self.status_msg = format!("Error: {}", e),
+                }
+                self.view = View::List;
+            }
+            _ => {
+                self.steer_form.text.handle_key(&key);
+            }
+        }
     }
 }

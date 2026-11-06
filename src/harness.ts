@@ -2,7 +2,7 @@
  * Harness adapters. A harness runs ONE iteration (one fresh agent context) and
  * streams normalized events, ending with a `harness_exit` event.
  *
- * Process harnesses (claude-print, codex, opencode, gh) spawn a CLI in its
+ * Process harnesses (codex, opencode, gh) spawn a CLI in its
  * non-interactive JSONL mode. The `claude` harness drives a real Claude Code
  * background session instead (see claudeBg.ts).
  */
@@ -145,32 +145,6 @@ const modelArgs = (flag: string, value: string | null): ReadonlyArray<string> =>
 const effortArgs = (flag: string, value: string | null): ReadonlyArray<string> =>
   value === null ? [] : [flag, value];
 
-export const claudePrint: Harness = {
-  id: "claude-print",
-  binary: "claude",
-  installHint: "Install Claude Code: https://code.claude.com",
-  defaultModel: "opus",
-  defaultEffort: null,
-  run: (i) =>
-    runJsonlProcess(
-      "claude-print",
-      "claude",
-      [
-        "-p",
-        ...modelArgs("--model", i.model),
-        ...effortArgs("--effort", i.effort),
-        "--dangerously-skip-permissions",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "-n",
-        i.sessionName,
-        i.prompt,
-      ],
-      i,
-    ),
-};
-
 export const codex: Harness = {
   id: "codex",
   binary: "codex",
@@ -225,7 +199,8 @@ export const copilot: Harness = {
   id: "gh",
   binary: "copilot",
   installHint: "npm install -g @github/copilot",
-  defaultModel: "claude-sonnet-4.6",
+  // Explicit model ids go stale (claude-sonnet-4.6 was rejected 2026-11-06); let copilot choose.
+  defaultModel: null,
   defaultEffort: "high",
   run: (i) =>
     runJsonlProcess(

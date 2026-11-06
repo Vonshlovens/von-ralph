@@ -57,9 +57,10 @@ const claudeErrorKind = (code: unknown, text: string): ErrorKind => {
 };
 
 /**
- * Claude Code: handles both the session transcript (`~/.claude/projects/…/<id>.jsonl`,
- * used by background sessions) and `claude -p --output-format stream-json`.
- * The shapes overlap: `assistant`/`user` entries carry an Anthropic `message`.
+ * Claude Code session transcript (`~/.claude/projects/…/<id>.jsonl`), tailed
+ * while a background session runs. `assistant`/`user` entries carry an
+ * Anthropic `message`; the format is internal to Claude Code, so unknown
+ * entries are ignored (they stay in the raw file).
  */
 export const claudeParser = (): Parser => {
   const seenUsage = new Set<string>();
@@ -148,17 +149,6 @@ export const claudeParser = (): Parser => {
       case "cost-state": {
         const cost = num(e.totalCostUSD);
         if (cost !== undefined) out.push({ type: "usage", totalCostUsd: cost });
-        return out;
-      }
-      case "result": {
-        // stream-json terminal event (claude -p)
-        const cost = num(e.total_cost_usd);
-        if (cost !== undefined) out.push({ type: "usage", totalCostUsd: cost });
-        if (e.is_error === true) {
-          const msg = str(e.result) || str(e.subtype);
-          out.push({ type: "error", kind: classifyError(msg), message: msg });
-        }
-        out.push({ type: "turn_end", durationMs: num(e.duration_ms) });
         return out;
       }
       default:
@@ -344,7 +334,6 @@ export const copilotParser = (): Parser => {
 export const makeParser = (harness: HarnessId): Parser => {
   switch (harness) {
     case "claude":
-    case "claude-print":
       return claudeParser();
     case "codex":
       return codexParser();

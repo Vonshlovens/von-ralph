@@ -43,7 +43,7 @@ Harness defaults (override with -m):
   claude    opus
   codex     (codex config default) (reasoning: xhigh)
   opencode  openai/gpt-5.5                    (variant: max)
-  gh        claude-sonnet-4.6  (effort:    high)
+  gh        (copilot default)  (effort:    high)
 
 Examples:
   ralph 10                                          # 10 runs with default prompt
@@ -108,7 +108,7 @@ case "$HARNESS" in
   claude)   DEFAULT_MODEL="opus" ;;
   codex)    DEFAULT_MODEL="" ;;  # codex config default (explicit gpt-5.x ids are rejected on ChatGPT logins)
   opencode) DEFAULT_MODEL="openai/gpt-5.5" ;;
-  gh)       DEFAULT_MODEL="claude-sonnet-4.6" ;;
+  gh)       DEFAULT_MODEL="" ;;  # copilot default (explicit ids go stale)
   *)
     echo "Error: unknown harness '$HARNESS' (expected: claude, codex, opencode, gh)"
     exit 1
@@ -280,7 +280,7 @@ run_harness() {
       copilot -p "$prompt" \
         --allow-all-tools --allow-all-paths --allow-all-urls \
         --add-dir "$(pwd)" \
-        --model "$model" \
+        ${model:+--model "$model"} \
         --reasoning-effort high \
         --output-format json \
         --no-color </dev/null 2>/dev/null \

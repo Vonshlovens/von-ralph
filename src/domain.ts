@@ -2,13 +2,13 @@
  * Ralph domain: harness ids, normalized events, persisted records, errors.
  *
  * Every harness adapter turns its native stream into `HarnessEvent`s. The loop
- * wraps them into `RalphEvent`s (adding instance/iteration/timestamp) and
- * appends them to `events.jsonl`. Raw harness output is always kept beside
- * them, so a parser gap is an observability gap, never lost data.
+ * wraps them into `RalphEvent`s (adding run/instance/iteration/timestamp) and
+ * stores them in SQLite (see store.ts). Raw harness output is always kept on
+ * disk beside them, so a parser gap is an observability gap, never lost data.
  */
 import { Data, Schema } from "effect";
 
-export const HarnessId = Schema.Literals(["claude", "claude-print", "codex", "opencode", "gh"]);
+export const HarnessId = Schema.Literals(["claude", "codex", "opencode", "gh"]);
 export type HarnessId = typeof HarnessId.Type;
 export const harnessIds: ReadonlyArray<HarnessId> = HarnessId.literals;
 
@@ -57,10 +57,17 @@ export type LoopEvent =
       readonly durationMs: number;
     }
   | { readonly type: "rate_limit_sleep"; readonly seconds: number }
+  | {
+      readonly type: "steer_received";
+      readonly id: number;
+      readonly kind: SteerKind;
+      readonly text: string;
+    }
   | { readonly type: "run_finished"; readonly reason: StopReason; readonly iterations: number };
 
 export type RalphEvent = LoopEvent & {
   readonly ts: string;
+  readonly run: string;
   readonly instance: string;
   readonly iteration: number;
 };
@@ -71,6 +78,7 @@ export const IterationOutcome = Schema.Literals([
   "blocked",
   "rate_limited",
   "auth_failed",
+  "timed_out",
   "interrupted",
 ]);
 export type IterationOutcome = typeof IterationOutcome.Type;
@@ -81,16 +89,25 @@ export const StopReason = Schema.Literals([
   "rate_limited",
   "auth_failed",
   "harness_failed",
+  "operator_stop",
   "interrupted",
+  "crashed",
 ]);
 export type StopReason = typeof StopReason.Type;
 
 export const InstanceStatus = Schema.Literals(["running", "finished", "failed", "stopped"]);
 export type InstanceStatus = typeof InstanceStatus.Type;
 
-/** `~/.ralph/v2/instances/<name>/instance.json` */
+/** Steering request kinds: `note` is appended to the next iteration's prompt; `stop` ends the run before it. */
+export const SteerKind = Schema.Literals(["note", "stop"]);
+export type SteerKind = typeof SteerKind.Type;
+
+/**
+ * One run of a named loop (`runs` table). A name can be reused once its
+ * previous run has ended; `name` resolves to the most recent run.
+ */
 export const Instance = Schema.Struct({
-  version: Schema.Literal(1),
+  id: Schema.String,
   name: Schema.String,
   pid: Schema.Number,
   harness: HarnessId,
@@ -101,6 +118,8 @@ export const Instance = Schema.Struct({
   prompt: Schema.String,
   maxIterations: Schema.Number,
   marathon: Schema.Boolean,
+  /** 0 = no per-iteration timeout */
+  iterationTimeoutSeconds: Schema.Number,
   status: InstanceStatus,
   currentIteration: Schema.Number,
   stopReason: Schema.NullOr(StopReason),
@@ -110,7 +129,7 @@ export const Instance = Schema.Struct({
 });
 export type Instance = typeof Instance.Type;
 
-/** `~/.ralph/v2/instances/<name>/iterations/<n>.json` */
+/** One iteration of a run (`iterations` table). */
 export const IterationRecord = Schema.Struct({
   iteration: Schema.Number,
   outcome: IterationOutcome,

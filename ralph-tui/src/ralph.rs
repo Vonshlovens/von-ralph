@@ -21,6 +21,11 @@ pub struct RalphInstance {
     pub alive: bool,
     pub log_path: PathBuf,
     pub has_log: bool,
+    /// Run id for ralph-next runs (SQLite state); None for legacy bash ralphs.
+    pub run_id: Option<String>,
+    /// running | finished | failed | stopped (ralph-next), or "legacy".
+    pub status: String,
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Clone)]
@@ -41,7 +46,7 @@ pub fn default_model_for_harness(harness: &str) -> &'static str {
     match harness {
         "codex" => "",
         "opencode" => "openai/gpt-5.5",
-        "gh" => "claude-sonnet-4.6",
+        "gh" => "",
         _ => "opus",
     }
 }
@@ -212,12 +217,76 @@ fn parse_meta(path: &Path) -> Option<RalphInstance> {
         alive,
         log_path,
         has_log,
+        run_id: None,
+        status: "legacy".to_string(),
+        stop_reason: None,
     })
 }
 
+/// ralph-next state root: $RALPH_HOME or ~/.ralph/v2 (see docs/state-schema.md).
+fn v2_root() -> PathBuf {
+    std::env::var_os("RALPH_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| ralph_dir().join("v2"))
+}
+
+/// Latest run per name from ralph-next's SQLite database (read-only).
+fn list_v2() -> Vec<RalphInstance> {
+    let db = v2_root().join("ralph.db");
+    if !db.exists() {
+        return vec![];
+    }
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        &db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return vec![];
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, name, pid, harness, model, prompt, max_iterations, marathon, dir, \
+                started_at, current_iteration, status, stop_reason \
+         FROM runs r WHERE started_at = (SELECT MAX(started_at) FROM runs WHERE name = r.name)",
+    ) else {
+        return vec![];
+    };
+    let rows = stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let pid: i64 = row.get(2)?;
+        let status: String = row.get(11)?;
+        let log_path = v2_root().join("runs").join(&id).join("log");
+        Ok(RalphInstance {
+            name: row.get(1)?,
+            pid: pid.max(0) as u32,
+            harness: row.get(3)?,
+            model: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "(default)".to_string()),
+            prompt: row.get(5)?,
+            max_runs: row.get::<_, i64>(6)?.max(0) as u32,
+            marathon: row.get::<_, i64>(7)? != 0,
+            work_dir: row.get(8)?,
+            started: row.get(9)?,
+            current_run: row.get::<_, i64>(10)?.max(0) as u32,
+            alive: status == "running" && is_alive(pid.max(0) as u32),
+            has_log: log_path.exists(),
+            log_path,
+            run_id: Some(id),
+            status,
+            stop_reason: row.get(12)?,
+        })
+    });
+    match rows {
+        Ok(rows) => rows.flatten().collect(),
+        Err(_) => vec![],
+    }
+}
+
+fn find_v2(name: &str) -> Option<RalphInstance> {
+    list_v2().into_iter().find(|i| i.name == name)
+}
+
 pub fn list_instances() -> Vec<RalphInstance> {
-    let mut instances = Vec::new();
-    let mut known_names = HashSet::new();
+    let mut instances = list_v2();
+    let mut known_names: HashSet<String> = instances.iter().map(|i| i.name.clone()).collect();
 
     // Read meta files
     if let Ok(entries) = fs::read_dir(pid_dir()) {
@@ -225,6 +294,10 @@ pub fn list_instances() -> Vec<RalphInstance> {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("meta") {
                 if let Some(inst) = parse_meta(&path) {
+                    // A dead legacy record shadowed by a ralph-next run of the same name is noise.
+                    if known_names.contains(&inst.name) && !inst.alive {
+                        continue;
+                    }
                     known_names.insert(inst.name.clone());
                     instances.push(inst);
                 }
@@ -276,17 +349,31 @@ pub fn list_instances() -> Vec<RalphInstance> {
                     alive: false,
                     log_path: path,
                     has_log: true,
+                    run_id: None,
+                    status: "legacy".to_string(),
+                    stop_reason: None,
                 });
             }
         }
     }
 
-    // Sort: alive first, then by name
-    instances.sort_by(|a, b| b.alive.cmp(&a.alive).then(a.name.cmp(&b.name)));
+    // Sort: alive first, then ralph-next runs (newest first), then legacy by name
+    instances.sort_by(|a, b| {
+        b.alive
+            .cmp(&a.alive)
+            .then(b.run_id.is_some().cmp(&a.run_id.is_some()))
+            .then(b.started.cmp(&a.started))
+            .then(a.name.cmp(&b.name))
+    });
     instances
 }
 
 pub fn kill_instance(name: &str) -> Result<String> {
+    if let Some(inst) = find_v2(name) {
+        if inst.status == "running" {
+            return run_next(&["stop", name]);
+        }
+    }
     let meta_path = pid_dir().join(format!("{}.meta", name));
     if !meta_path.exists() {
         anyhow::bail!("No ralph named '{}' found", name);
@@ -317,6 +404,13 @@ pub fn kill_instance(name: &str) -> Result<String> {
 
 pub fn clean_dead() -> Vec<String> {
     let mut cleaned = Vec::new();
+    if let Ok(out) = run_next(&["clean"]) {
+        cleaned.extend(
+            out.lines()
+                .filter_map(|l| l.trim().strip_prefix("marked crashed: "))
+                .map(|l| l.split(' ').next().unwrap_or(l).to_string()),
+        );
+    }
     if let Ok(entries) = fs::read_dir(pid_dir()) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -338,79 +432,80 @@ fn clean_meta(name: &str) {
     let _ = fs::remove_file(pid_dir().join(format!("{}.pid", name)));
 }
 
-pub fn ralph_bin_path() -> PathBuf {
+/// Path to the ralph-next CLI (bin/ralph-next in the repo).
+pub fn ralph_next_path() -> PathBuf {
+    if let Ok(p) = std::env::var("RALPH_NEXT_BIN") {
+        return PathBuf::from(p);
+    }
     for c in repo_candidates() {
-        let p = c.join("ralph");
+        let p = c.join("bin/ralph-next");
         if p.exists() {
             return p;
         }
     }
     // Last resort: return a likely-broken path so the error message is useful
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join("von/ralph/ralph")
+    dirs::home_dir().unwrap_or_default().join("von/ralph/bin/ralph-next")
+}
+
+/// Run a ralph-next subcommand and return its last output line (or the error text).
+fn run_next(args: &[&str]) -> Result<String> {
+    let bin = ralph_next_path();
+    if !bin.exists() {
+        anyhow::bail!("ralph-next not found at {}", bin.display());
+    }
+    let out = Command::new(&bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .context("Failed to run ralph-next")?;
+    let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+    let stdout = text(&out.stdout);
+    if out.status.success() {
+        Ok(stdout.lines().last().unwrap_or("ok").trim().to_string())
+    } else {
+        let stderr = text(&out.stderr);
+        let msg = if stderr.is_empty() { stdout } else { stderr };
+        anyhow::bail!("{}", msg.lines().find(|l| !l.trim().is_empty()).unwrap_or("ralph-next failed"))
+    }
 }
 
 pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {
-    let bin = ralph_bin_path();
-    if !bin.exists() {
-        anyhow::bail!("ralph binary not found at {}", bin.display());
-    }
-
-    let mut args: Vec<String> = Vec::new();
-
-    if !opts.prompt.is_empty() {
-        args.push(opts.prompt.clone());
-    }
-    if opts.max_runs > 0 {
-        args.push(opts.max_runs.to_string());
-    }
-    if !opts.name.is_empty() {
-        args.push("-n".to_string());
-        args.push(opts.name.clone());
-    }
-    if !opts.dir.is_empty() {
-        args.push("-d".to_string());
-        args.push(opts.dir.clone());
+    if opts.prompt.trim().is_empty() {
+        anyhow::bail!("a prompt is required");
     }
     let harness = if opts.harness.is_empty() { "claude" } else { opts.harness.as_str() };
-    let default_model = default_model_for_harness(harness);
-    if !opts.model.is_empty() && opts.model != default_model {
-        args.push("-m".to_string());
-        args.push(opts.model.clone());
+    let max = opts.max_runs.to_string();
+    let mut args: Vec<&str> = vec!["run", "--detach", "-H", harness, "-N", &max];
+    if !opts.name.is_empty() {
+        args.extend(["-n", &opts.name]);
     }
-    if harness != "claude" {
-        args.push("-H".to_string());
-        args.push(harness.to_string());
+    if !opts.dir.is_empty() {
+        args.extend(["-d", &opts.dir]);
+    }
+    if !opts.model.is_empty() && opts.model != default_model_for_harness(harness) {
+        args.extend(["-m", &opts.model]);
     }
     if opts.marathon {
-        args.push("--marathon".to_string());
+        args.push("--marathon");
     }
+    args.push(&opts.prompt);
+    let out = run_next(&args)?;
+    // `ralph-next run --detach` prints "🚀 <name> started (run …)" then the log path.
+    Ok(out.replace("   log ", "log: "))
+}
 
-    let cwd = if opts.dir.is_empty() {
-        std::env::current_dir().unwrap_or_default()
-    } else {
-        PathBuf::from(&opts.dir)
-    };
-
-    Command::new(&bin)
-        .args(&args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("Failed to spawn ralph")?;
-
-    let name_display = if opts.name.is_empty() {
-        "ralph (auto-named)"
-    } else {
-        &opts.name
-    };
-    Ok(format!("Launched {}", name_display))
+pub fn steer_instance(name: &str, text: &str) -> Result<String> {
+    if text.trim().is_empty() {
+        anyhow::bail!("steer text is empty");
+    }
+    run_next(&["steer", name, text])
 }
 
 pub fn restart_instance(name: &str, new_max_runs: u32) -> Result<String> {
+    if find_v2(name).is_some() {
+        let max = new_max_runs.to_string();
+        return run_next(&["restart", name, "-N", &max]);
+    }
     let meta_path = pid_dir().join(format!("{}.meta", name));
     if !meta_path.exists() {
         anyhow::bail!("No ralph named '{}' found", name);

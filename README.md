@@ -37,31 +37,40 @@ ralph-status kill kanban-worker
 cody "Fix lint errors"
 ```
 
-## ralph-next (preview)
+## ralph-next
 
-`bin/ralph-next` is the Effect v4 / TypeScript rewrite of the runner
-(see [docs/ralph-v2-design.md](docs/ralph-v2-design.md)). It runs directly
-with Node ≥24 type stripping — no build step:
+`bin/ralph-next` is the Effect v4 / TypeScript runner (see
+[docs/ralph-v2-design.md](docs/ralph-v2-design.md)); the bash scripts below
+are legacy. It runs directly with Node ≥24 type stripping — no build step:
 
 ```bash
 pnpm install
 bin/ralph-next doctor                                   # which harness CLIs are installed
-bin/ralph-next run "See AGENT_PROMPT.md" -N 10 -d ~/cwl-api -n kanban-worker
-bin/ralph-next run "Fix lint" -H codex -N 3             # codex uses its configured default model
-bin/ralph-next status
+bin/ralph-next run "See AGENT_PROMPT.md" -N 10 -d ~/cwl-api -n kanban-worker --detach
+bin/ralph-next run "Fix lint" -H codex -N 3             # foreground; codex uses its configured model
+bin/ralph-next status                                   # also lists live legacy bash ralphs
+bin/ralph-next show kanban-worker                       # per-iteration outcome, tokens, cost, commits
+bin/ralph-next tail kanban-worker -f                    # follow the log live
+bin/ralph-next steer kanban-worker "Skip docs; fix the failing tests first."
+bin/ralph-next stop kanban-worker --graceful            # after the current iteration (or now, without -g)
+bin/ralph-next restart kanban-worker -N 5
 ```
 
-Differences from the bash `ralph`:
-
-- `-H claude` drives **real Claude Code background sessions** (`claude --bg`),
-  one fresh session per iteration; `claude attach <id>` works on any
-  iteration. `-H claude-print` keeps the old `claude -p` path.
-- Versioned state in `~/.ralph/v2/instances/<name>/`: `instance.json`,
-  normalized `events.jsonl`, per-iteration records, raw harness output, and
-  the familiar emoji `log`.
+- `-H claude` (default) drives **real Claude Code background sessions**
+  (`claude --bg`), one fresh session per iteration — not `claude -p`.
+  `claude attach <id>` opens any iteration; the id is in the log and `show`.
+- State is SQLite at `~/.ralph/v2/ralph.db` plus per-run logs and raw harness
+  output ([docs/state-schema.md](docs/state-schema.md)). Runs keep history; a
+  name refers to its latest run.
 - Every iteration ends with a recorded outcome (`completed`, `failed`,
-  `blocked`, `rate_limited`, `auth_failed`, `interrupted`); blocked and auth
-  failures stop the loop instead of spinning.
+  `blocked`, `rate_limited`, `auth_failed`, `timed_out`, `interrupted`).
+  Blocked and auth failures stop the loop instead of spinning; three
+  consecutive failures stop it too. `--timeout <min>` bounds each iteration
+  (default 120).
+- Steering notes are consumed between iterations and appended to the next
+  prompt; `stop --graceful` ends the run at the next boundary.
+- The TUI (`rmux`) reads the same database, launches through `ralph-next`, and
+  steers with `s`.
 
 Develop with `pnpm test` (Vite+ / vitest) and `pnpm check` (tsc + oxlint).
 
@@ -76,7 +85,7 @@ JSONL event stream is parsed into a uniform log.
 | `claude` (default) | `claude` | Claude Code | `opus` | — |
 | `codex` | `codex` | `npm i -g @openai/codex` | codex config default | `-c model_reasoning_effort=xhigh` |
 | `opencode` | `opencode` | see https://opencode.ai | `openai/gpt-5.5` | `--variant max` |
-| `gh` | `copilot` | `npm i -g @github/copilot` | `claude-sonnet-4.6` | `--effort high` |
+| `gh` | `copilot` | `npm i -g @github/copilot` | copilot default | `--effort high` |
 
 ```bash
 ralph "Refactor utils" -H codex

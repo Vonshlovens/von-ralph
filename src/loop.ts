@@ -2,7 +2,7 @@
  * The Ralph loop: run the same prompt in a fresh agent context per iteration,
  * record everything, and stop on a clear, recorded reason.
  */
-import { Console, Duration, Effect, Ref, Stream } from "effect";
+import { Console, Duration, Effect, Option, Ref, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as nodePath from "node:path";
 import {
@@ -17,7 +17,7 @@ import {
   clip,
 } from "./domain.ts";
 import { type Harness, checkBinary } from "./harness.ts";
-import { Store, formatLogLine } from "./store.ts";
+import { Store, formatLogLine, newRunId } from "./store.ts";
 
 export interface LoopConfig {
   readonly name: string;
@@ -33,6 +33,8 @@ export interface LoopConfig {
   readonly rateLimitSleepSeconds: number;
   readonly pauseBetween: Duration.Input;
   readonly maxConsecutiveFailures: number;
+  /** 0 = no per-iteration timeout */
+  readonly iterationTimeoutSeconds: number;
   /** Print the human-readable log to stdout as well. */
   readonly echo: boolean;
   readonly beadId: string | null;
@@ -42,6 +44,7 @@ export const defaults = {
   rateLimitSleepSeconds: 1800,
   pauseBetween: "2 seconds",
   maxConsecutiveFailures: 3,
+  iterationTimeoutSeconds: 2 * 60 * 60,
 } as const;
 
 interface Tally {
@@ -130,14 +133,30 @@ const gitHead = (dir: string) =>
 
 const now = () => new Date().toISOString();
 
+/** Append operator steering notes to the base prompt for one iteration. Exported for tests. */
+export const composePrompt = (base: string, notes: ReadonlyArray<string>): string =>
+  notes.length === 0
+    ? base
+    : `${base}\n\n## Operator notes for this iteration\n\nThe human supervising this loop added:\n\n${notes
+        .map((n) => `- ${n}`)
+        .join("\n")}`;
+
+const statusFor = (reason: StopReason): Instance["status"] =>
+  reason === "interrupted" || reason === "operator_stop"
+    ? "stopped"
+    : reason === "max_iterations"
+      ? "finished"
+      : "failed";
+
 export const runLoop = (cfg: LoopConfig) =>
   Effect.gen(function* () {
     const store = yield* Store;
     yield* checkBinary(cfg.harness);
     const dir = nodePath.resolve(cfg.dir);
+    const runId = newRunId();
 
-    let instance: Instance = {
-      version: 1,
+    yield* store.create({
+      id: runId,
       name: cfg.name,
       pid: process.pid,
       harness: cfg.harness.id,
@@ -147,23 +166,18 @@ export const runLoop = (cfg: LoopConfig) =>
       prompt: cfg.prompt,
       maxIterations: cfg.maxIterations,
       marathon: cfg.marathon,
+      iterationTimeoutSeconds: cfg.iterationTimeoutSeconds,
       status: "running",
       currentIteration: 0,
       stopReason: null,
       startedAt: now(),
       updatedAt: now(),
       beadId: cfg.beadId,
-    };
-    yield* store.create(instance);
-    const update = (patch: Partial<Instance>) =>
-      Effect.suspend(() => {
-        instance = { ...instance, ...patch, updatedAt: now() };
-        return store.writeInstance(instance);
-      });
+    });
 
     const emit = (iteration: number, e: LoopEvent) =>
       Effect.gen(function* () {
-        const ev = { ...e, ts: now(), instance: cfg.name, iteration } as RalphEvent;
+        const ev = { ...e, ts: now(), run: runId, instance: cfg.name, iteration } as RalphEvent;
         yield* store.appendEvent(ev);
         if (cfg.echo) {
           const line = formatLogLine(ev);
@@ -171,28 +185,28 @@ export const runLoop = (cfg: LoopConfig) =>
         }
       });
 
-    const runIteration = (n: number) =>
+    const runIteration = (n: number, prompt: string) =>
       Effect.gen(function* () {
         const startedAt = now();
         const t0 = Date.now();
         const headBefore = yield* gitHead(dir);
-        yield* emit(n, { type: "iteration_started", prompt: clip(cfg.prompt, 500) });
+        yield* emit(n, { type: "iteration_started", prompt: clip(prompt, 500) });
         const tally = newTally();
-        yield* cfg.harness
+        const drive = cfg.harness
           .run({
-            prompt: cfg.prompt,
+            prompt,
             model: cfg.model,
             effort: cfg.effort,
             dir,
             sessionName: `${cfg.name}-${n}`,
-            onRaw: (line) => store.appendRaw(cfg.name, n, line).pipe(Effect.ignore),
+            onRaw: (line) => store.appendRaw(runId, n, line).pipe(Effect.ignore),
           })
           .pipe(
             Stream.catchTag("HarnessFailed", (e: HarnessFailed) =>
-              Stream.make<ReadonlyArray<HarnessEvent>>(
+              Stream.fromIterable<HarnessEvent>([
                 { type: "error", kind: "unknown", message: e.message },
                 { type: "harness_exit", status: "failed", detail: e.reason },
-              ),
+              ]),
             ),
             Stream.runForEach((e) =>
               Effect.gen(function* () {
@@ -201,26 +215,48 @@ export const runLoop = (cfg: LoopConfig) =>
               }),
             ),
           );
-        const outcome = outcomeOf(tally);
-        const durationMs = Date.now() - t0;
-        const record: IterationRecord = {
-          iteration: n,
-          outcome,
-          startedAt,
-          finishedAt: now(),
-          durationMs,
-          sessionId: tally.sessionId,
-          attachId: tally.attachId,
-          headBefore,
-          headAfter: yield* gitHead(dir),
-          inputTokens: tally.inputTokens,
-          outputTokens: tally.outputTokens,
-          costUsd: tally.costTotal ?? (tally.costIncremental > 0 ? tally.costIncremental : null),
-          lastAssistant: tally.lastAssistant === null ? null : clip(tally.lastAssistant, 4000),
-          error: tally.lastError,
-        };
-        yield* store.writeIteration(cfg.name, record);
-        yield* emit(n, { type: "iteration_finished", outcome, durationMs });
+        const record = (outcome: IterationOutcome) =>
+          Effect.gen(function* () {
+            const durationMs = Date.now() - t0;
+            const rec: IterationRecord = {
+              iteration: n,
+              outcome,
+              startedAt,
+              finishedAt: now(),
+              durationMs,
+              sessionId: tally.sessionId,
+              attachId: tally.attachId,
+              headBefore,
+              headAfter: yield* gitHead(dir),
+              inputTokens: tally.inputTokens,
+              outputTokens: tally.outputTokens,
+              costUsd:
+                tally.costTotal ?? (tally.costIncremental > 0 ? tally.costIncremental : null),
+              lastAssistant: tally.lastAssistant === null ? null : clip(tally.lastAssistant, 4000),
+              error: tally.lastError,
+            };
+            yield* store.writeIteration(runId, rec);
+            yield* emit(n, { type: "iteration_finished", outcome, durationMs });
+          });
+        // A timeout interrupts only the inner stream (running the harness finalizers:
+        // kill the process / stop the Claude session). An outside stop interrupts
+        // the whole iteration, which is recorded as `interrupted`.
+        const bounded =
+          cfg.iterationTimeoutSeconds > 0
+            ? drive.pipe(
+                Effect.timeoutOption(Duration.seconds(cfg.iterationTimeoutSeconds)),
+                Effect.map(Option.isNone),
+              )
+            : drive.pipe(Effect.as(false));
+        const timedOut = yield* bounded.pipe(
+          Effect.onInterrupt(() => record("interrupted").pipe(Effect.ignore)),
+        );
+        if (timedOut) {
+          tally.lastError = `iteration timed out after ${cfg.iterationTimeoutSeconds}s`;
+          yield* emit(n, { type: "error", kind: "unknown", message: tally.lastError });
+        }
+        const outcome: IterationOutcome = timedOut ? "timed_out" : outcomeOf(tally);
+        yield* record(outcome);
         return outcome;
       });
 
@@ -237,8 +273,18 @@ export const runLoop = (cfg: LoopConfig) =>
       let consecutiveFailures = 0;
       for (let n = 1; ; n++) {
         if (cfg.maxIterations > 0 && n > cfg.maxIterations) return "max_iterations" as StopReason;
-        yield* update({ currentIteration: n });
-        const outcome = yield* runIteration(n);
+        // Steering is consumed only at iteration boundaries.
+        const steers = yield* store.takeSteers(runId, n);
+        for (const st of steers) {
+          yield* emit(n, { type: "steer_received", id: st.id, kind: st.kind, text: st.text });
+        }
+        if (steers.some((st) => st.kind === "stop")) return "operator_stop" as StopReason;
+        const prompt = composePrompt(
+          cfg.prompt,
+          steers.filter((st) => st.kind === "note").map((st) => st.text),
+        );
+        yield* store.update(runId, { currentIteration: n });
+        const outcome = yield* runIteration(n, prompt);
         yield* Ref.set(iterations, n);
         switch (outcome) {
           case "blocked":
@@ -254,6 +300,7 @@ export const runLoop = (cfg: LoopConfig) =>
             consecutiveFailures = 0;
             continue;
           case "failed":
+          case "timed_out":
             consecutiveFailures++;
             if (consecutiveFailures >= cfg.maxConsecutiveFailures)
               return "harness_failed" as StopReason;
@@ -269,13 +316,7 @@ export const runLoop = (cfg: LoopConfig) =>
     const finish = (reason: StopReason) =>
       Effect.gen(function* () {
         const n = yield* Ref.get(iterations);
-        const status =
-          reason === "interrupted"
-            ? "stopped"
-            : reason === "max_iterations"
-              ? "finished"
-              : "failed";
-        yield* update({ status, stopReason: reason });
+        yield* store.update(runId, { status: statusFor(reason), stopReason: reason });
         yield* emit(n, { type: "run_finished", reason, iterations: n });
       }).pipe(Effect.ignore);
 
@@ -283,5 +324,6 @@ export const runLoop = (cfg: LoopConfig) =>
       Effect.tap(finish),
       Effect.onInterrupt(() => finish("interrupted")),
       Effect.tapError(() => finish("harness_failed")),
+      Effect.map((reason) => ({ runId, reason })),
     );
   });
