@@ -39,7 +39,7 @@ pub const HARNESSES: &[&str] = &["claude", "codex", "opencode", "gh"];
 
 pub fn default_model_for_harness(harness: &str) -> &'static str {
     match harness {
-        "codex" => "gpt-5.5",
+        "codex" => "",
         "opencode" => "openai/gpt-5.5",
         "gh" => "claude-sonnet-4.6",
         _ => "opus",
@@ -115,6 +115,7 @@ fn repo_candidates() -> Vec<PathBuf> {
 
     // 3. Common locations under $HOME
     if let Some(home) = dirs::home_dir() {
+        out.push(home.join("von/ralph"));
         out.push(home.join("von-ralph"));
         out.push(home.join("projects/von-ralph"));
     }
@@ -347,7 +348,7 @@ pub fn ralph_bin_path() -> PathBuf {
     // Last resort: return a likely-broken path so the error message is useful
     dirs::home_dir()
         .unwrap_or_default()
-        .join("von-ralph/ralph")
+        .join("von/ralph/ralph")
 }
 
 pub fn spawn_ralph(opts: &SpawnOpts) -> Result<String> {

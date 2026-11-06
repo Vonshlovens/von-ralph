@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Shim for the Effect-based runner (src/bin.ts, run via Node type stripping).
+here="$(dirname "$(readlink -f "$0")")"
+exec node "$here/../src/bin.ts" "$@"

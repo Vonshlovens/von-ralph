@@ -1,0 +1,37 @@
+{
+  "name": "von-ralph",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless agent loops (Ralph Wiggum technique) across Claude Code, Codex, OpenCode and Copilot",
+  "packageManager": "pnpm@10.34.8",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "bin": {
+    "ralph-next": "./bin/ralph-next"
+  },
+  "scripts": {
+    "ralph": "node src/bin.ts",
+    "check": "tsc --noEmit && vp lint",
+    "test": "vp test run",
+    "fmt": "vp fmt"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.6",
+    "effect": "4.0.6"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.6",
+    "@types/node": "24.10.1",
+    "typescript": "6.0.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
+    "vite-plus": "1.4.0",
+    "vitest": "5.0.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.0.6"
+    }
+  }
+}
