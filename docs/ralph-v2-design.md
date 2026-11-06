@@ -369,7 +369,9 @@ Progress (2026-11-06):
   n8n recipe in [n8n.md](n8n.md). `ralph schedule add|list|run|pause|resume|rm`
   as systemd user timers (cron → `OnCalendar`, foreground oneshot service so
   systemd sees the exit code). Runs table gains `callback_url` (0003). Web UI
-  (SvelteKit 3) next.
+  in `web/` (SvelteKit 3 SPA served by `ralph serve`): live runs, event feed,
+  iterations, report, steer/stop/restart, start, schedules. Remaining for M3:
+  live n8n end-to-end against a real workflow.
 - **Renamed** — `ralph-next` → `ralph` (0.5.0); bash scripts moved to
   `legacy/`.
 - **M2 done** — the process as commands: `init` (config, prompts, AGENTS.md

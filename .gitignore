@@ -1,7 +1,5 @@
 node_modules
 .svelte-kit
-dashboard/node_modules
-dashboard/.svelte-kit
-dashboard/build
+web/build
 ralph-tui/target
 node_modules

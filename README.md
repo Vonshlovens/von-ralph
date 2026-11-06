@@ -20,6 +20,7 @@ with Node ≥24 type stripping — no build step (design:
 
 ```bash
 cd ~/von/ralph && pnpm install
+pnpm web:build                   # optional: the web UI that `ralph serve` hosts
 ln -sf ~/von/ralph/bin/ralph ~/.local/bin/ralph
 ln -sf ~/von/ralph/rmux ~/.local/bin/rmux
 ralph doctor                     # which harness CLIs are installed and logged in
@@ -104,6 +105,11 @@ ralph schedule run nightly                     # start it now; pause / resume / 
   (`/v1/runs/:id/stream` with `Last-Event-ID` resume, `/v1/stream` for the
   run list), and `/v1/schedules`. Starting a run re-execs the CLI detached, so
   runs outlive the server. Full route list: [src/server.ts](src/server.ts).
+- **Web UI** (`web/`, SvelteKit 3 + Svelte 5, pnpm, Vite+): `pnpm web:build`
+  once and `ralph serve` hosts it at `/` — live run list, per-run event feed,
+  iterations, report, steer / stop / restart, start a run, schedules. It is a
+  static SPA over the same `/v1` API (token prompt when the server has one).
+  `pnpm web:dev` runs Vite against a running `ralph serve`.
 - **Callbacks**: `--callback <url>` (or `callbackUrl` over the API) POSTs
   `{event, reason, exitCode, needsHuman, run, report}` when the run ends,
   HMAC-signed with `RALPH_CALLBACK_SECRET[_FILE]`. That is n8n's

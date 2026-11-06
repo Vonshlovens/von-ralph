@@ -11,7 +11,10 @@
     "ralph": "node src/bin.ts",
     "check": "tsc --noEmit && vp lint",
     "test": "vp test run",
-    "fmt": "vp fmt"
+    "fmt": "vp fmt",
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build",
+    "web:check": "pnpm --dir web check"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.6",
