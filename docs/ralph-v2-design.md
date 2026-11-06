@@ -25,17 +25,17 @@ Sources: <https://ghuntley.com/ralph/>, <https://ghuntley.com/loop/>,
 
 "Three phases, two prompts, one loop":
 
-| Phase | Who | Output | Loop? |
-|---|---|---|---|
-| 1. Define requirements | Human + LLM conversation: jobs-to-be-done → topics of concern → one spec per topic | `specs/*.md` + `specs/README.md` index ("the pin") | No — interactive |
-| 2. Plan | Agent: gap analysis of specs vs code. **Plan only, no implementation, no commits.** Usually 1–2 iterations | `IMPLEMENTATION_PLAN.md` (priority-sorted bullets; structure is the LLM's choice) | Yes, short |
-| 3. Build | Agent: pick the single most important item, search before assuming it's missing, implement fully, run tests, update the plan, commit | code, commits, plan updates | Yes, long |
+| Phase                  | Who                                                                                                                                  | Output                                                                            | Loop?            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ---------------- |
+| 1. Define requirements | Human + LLM conversation: jobs-to-be-done → topics of concern → one spec per topic                                                   | `specs/*.md` + `specs/README.md` index ("the pin")                                | No — interactive |
+| 2. Plan                | Agent: gap analysis of specs vs code. **Plan only, no implementation, no commits.** Usually 1–2 iterations                           | `IMPLEMENTATION_PLAN.md` (priority-sorted bullets; structure is the LLM's choice) | Yes, short       |
+| 3. Build               | Agent: pick the single most important item, search before assuming it's missing, implement fully, run tests, update the plan, commit | code, commits, plan updates                                                       | Yes, long        |
 
 Supporting files:
 
 - `AGENTS.md` — operational only: how to build, run, **validate** (test /
   typecheck / lint commands). ~60 lines max. Never status or changelog — that
-  pollutes every future loop's context. The validation commands *are* the
+  pollutes every future loop's context. The validation commands _are_ the
   backpressure.
 - `src/lib/` (or equivalent) — the project's "standard library"; wrong patterns
   are fixed here, wrong behavior is fixed in specs.
@@ -82,14 +82,14 @@ Rules that matter for a runner:
 
 Verified locally on 2.1.318 (probe run 2026-11-06):
 
-| Fact | Consequence for Ralph |
-|---|---|
-| `--bg` prints `backgrounded · <short-id> · <name>`; **`--session-id` is ignored** with a warning | Parse the short id from stdout; map to full `sessionId` via `claude agents --json --all` |
-| `claude agents --json --all` gives `{id, sessionId, cwd, kind, name, state, status?}`; `state ∈ working, blocked, done, failed, stopped` | Poll this for turn completion. `blocked` = needs a human → Ralph pauses and notifies, never loops past it |
-| Transcript at `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl` (internal format) | Tail it for events; treat parsing as best-effort and keep raw |
-| `--settings '{"worktree":{"bgIsolation":"none"}}'` accepted | Ralph owns worktree policy, not Claude's bg isolation (otherwise bg sessions auto-commit/push/draft-PR in `.claude/worktrees/`) |
-| `--effort low` was not reflected (session showed high effort) | Verify effort handling; may need `CLAUDE_CODE_EFFORT_LEVEL` env |
-| **Probe got `API Error: 403 this endpoint only accepts official Claude Code clients` → `blocked`, "Please run /login"** | Blocker: `~/.claude/settings.json` routes all traffic through `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` (process `underclass`). Interactive sessions work through it; daemon-backed bg sessions don't. Must be resolved before the bg harness is default |
+| Fact                                                                                                                                     | Consequence for Ralph                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--bg` prints `backgrounded · <short-id> · <name>`; **`--session-id` is ignored** with a warning                                         | Parse the short id from stdout; map to full `sessionId` via `claude agents --json --all`                                                                                                                                                                  |
+| `claude agents --json --all` gives `{id, sessionId, cwd, kind, name, state, status?}`; `state ∈ working, blocked, done, failed, stopped` | Poll this for turn completion. `blocked` = needs a human → Ralph pauses and notifies, never loops past it                                                                                                                                                 |
+| Transcript at `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl` (internal format)                                                        | Tail it for events; treat parsing as best-effort and keep raw                                                                                                                                                                                             |
+| `--settings '{"worktree":{"bgIsolation":"none"}}'` accepted                                                                              | Ralph owns worktree policy, not Claude's bg isolation (otherwise bg sessions auto-commit/push/draft-PR in `.claude/worktrees/`)                                                                                                                           |
+| `--effort low` was not reflected (session showed high effort)                                                                            | Verify effort handling; may need `CLAUDE_CODE_EFFORT_LEVEL` env                                                                                                                                                                                           |
+| **Probe got `API Error: 403 this endpoint only accepts official Claude Code clients` → `blocked`, "Please run /login"**                  | Blocker: `~/.claude/settings.json` routes all traffic through `ANTHROPIC_BASE_URL=http://127.0.0.1:8080` (process `underclass`). Interactive sessions work through it; daemon-backed bg sessions don't. Must be resolved before the bg harness is default |
 
 Other harness updates found:
 
@@ -123,7 +123,7 @@ Other harness updates found:
 - **Webhook runner contract v1** (`docs/file-tackle-dispatch.md`):
   `POST /agents`, `GET /agents/{id}/latest-run`, `GET /agents/{id}/runs/{run}`,
   optional follow-up and cancel; HMAC-SHA256 signing over
-  `<ts>.<METHOD> <path>\n<body>`. Ralph can *be* this runner.
+  `<ts>.<METHOD> <path>\n<body>`. Ralph can _be_ this runner.
 - **Mate runner contract v1** (`docs/first-mate.md`): long-lived session per
   chat with SSE MissionEvents (`user | assistant | thinking | tool_call |
   result | error`). A later, larger target.
@@ -165,29 +165,31 @@ IMPLEMENTATION_PLAN.md     generated by `ralph plan`, edited by `ralph build`
 `ralph.toml` sketch:
 
 ```toml
-harness = "claude"          # claude | codex | opencode | gh
-model   = "opus"
-effort  = "high"
+harness = "claude" # claude | codex | opencode | gh
+model = "opus"
+effort = "high"
 
 [plan]
-backend = "auto"            # auto | beads | markdown (auto: beads if .beads/ exists)
-file    = "IMPLEMENTATION_PLAN.md"
+backend = "auto" # auto | beads | markdown (auto: beads if .beads/ exists)
+file = "IMPLEMENTATION_PLAN.md"
 
-[validate]                  # runner-enforced backpressure (mirrors AGENTS.md)
+[validate] # runner-enforced backpressure (mirrors AGENTS.md)
 commands = ["cargo build", "cargo test"]
 
 [limits]
 max_iterations = 20
-no_progress_iterations = 3  # stop after N iterations with no new commit
+no_progress_iterations = 3 # stop after N iterations with no new commit
 ```
 
 ### 2.2 `ralph plan`
 
 - Runs the plan prompt with fresh context, max 2 iterations by default.
-- Stops early when an iteration leaves the plan file unchanged.
-- **Runner checks "plan only"**: if anything outside the plan file / `specs/`
-  changed, the iteration is flagged and the diff kept for review (not
-  silently reverted).
+- Stops early when an iteration leaves the plan unchanged (`plan_converged`).
+- **Runner checks "plan only"**: if anything outside the plan (`.ralph/`, the
+  plan file, `.beads/`) changed, the run stops with `scope_violation` and the
+  diff is kept in the run dir for review (not silently reverted). Specs are
+  out of bounds too: the human owns them, so the plan files an item for a
+  missing or ambiguous spec instead.
 - `--scope "<text>"` writes a scoped plan (Farr's `plan-work`) — useful for a
   branch or a single Bead.
 - Ends by printing the plan for **human review** — the plan is the cheapest
@@ -223,21 +225,23 @@ Both backends are required, not optional. Selection is automatic unless
 `[plan].backend` pins it:
 
 - `.beads/` present (or `bd` resolves a database for the repo) → **beads**.
-- otherwise → **markdown**: `IMPLEMENTATION_PLAN.md` for humans *plus* a
+- otherwise → **markdown**: `IMPLEMENTATION_PLAN.md` for humans _plus_ a
   machine-readable sidecar `.ralph/plan.json` (`{items: [{id, title, status,
   priority, depends_on, spec_refs, acceptance}]}`) so agents and the runner
   never have to parse prose to know what is open. The runner validates the
-  sidecar after every iteration; the markdown is regenerated from it (or kept
-  in sync by the prompt) so the two cannot silently drift.
+  sidecar after every iteration; the markdown is regenerated from it so the
+  two cannot silently drift. Agents edit it with `ralph-next task …`
+  (`list --ready`, `add`, `start`, `done --note`, `block --note`, `learn`),
+  the markdown backend's equivalent of `bd`.
 
 With the beads backend, the same process maps onto `bd`:
 
-| Markdown | Beads |
-|---|---|
+| Markdown                                     | Beads                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------ |
 | plan writes `IMPLEMENTATION_PLAN.md` bullets | plan runs `bd create` (with `--deps`, priority, labels; parent epic per scope) |
-| build picks the top bullet | build takes `bd ready` top, `bd update --claim`, `bd close` |
-| "plan empty" | `bd ready` empty for the scope |
-| regenerate plan | plan loop reconciles: close stale, file missing, re-prioritise |
+| build picks the top bullet                   | build takes `bd ready` top, `bd update --claim`, `bd close`                    |
+| "plan empty"                                 | `bd ready` empty for the scope                                                 |
+| regenerate plan                              | plan loop reconciles: close stale, file missing, re-prioritise                 |
 
 This is what makes Ralph first-class in Beadsmith: a Beadsmith "Tackle" is a
 one-item `ralph build` against a Bead; a Beadsmith "File"/elaborate is a
@@ -341,6 +345,19 @@ One long-running local process (systemd user unit) exposing:
 ## 5. Milestones
 
 Progress (2026-11-06):
+
+- **M2 done** — the process as commands: `init` (config, prompts, AGENTS.md
+  - CLAUDE.md import, specs index, detected validate commands), `spec`
+    (interactive Claude Code / Codex session), `reverse`, `plan`, `build`,
+    `task` (markdown plan CLI), `report`, `watch`, `sign`. Modes are policies on
+    the one loop: prompts re-read every iteration, runner-side validation with
+    failures fed into the next prompt, plan snapshots for both backends, scope
+    checks, and stop reasons `plan_complete`, `plan_exhausted`,
+    `plan_converged`, `no_progress`, `validate_failed`, `scope_violation`,
+    `complete` (sentinel in `run` mode). Exit codes: 0 done, 3 needs a human,
+    1 failed, 130 interrupted. Verified live with codex on a scratch project
+    (init → spec → plan converged in 2 → build). Beads backend verified
+    read-only against a real database; writes go through `bd` in the agent.
 
 - **M0 done** — opencode `--auto`, copilot `--reasoning-effort`, TUI repo
   discovery includes `~/von/ralph`, preset path fixed, and **codex default

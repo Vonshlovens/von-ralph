@@ -235,6 +235,8 @@ describe("runLoop", () => {
       startedAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
       beadId: null,
+      mode: "run" as const,
+      scope: null,
     };
     return Effect.gen(function* () {
       const store = yield* Store;

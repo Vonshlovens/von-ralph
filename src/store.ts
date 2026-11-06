@@ -159,6 +159,13 @@ const migrations = {
     )`;
     yield* sql`CREATE INDEX steers_pending ON steers (run_id, consumed_at)`;
   }),
+  "0002_modes": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'run'`;
+    yield* sql`ALTER TABLE runs ADD COLUMN scope TEXT`;
+    yield* sql`ALTER TABLE iterations ADD COLUMN validate_ok INTEGER`;
+    yield* sql`ALTER TABLE iterations ADD COLUMN plan_open INTEGER`;
+  }),
 };
 
 // ------------------------------------------------------------- row codecs
@@ -168,14 +175,18 @@ const RunRow = Schema.Struct({
   marathon: Schema.BooleanFromBit,
 });
 const decodeRun = Schema.decodeUnknownEffect(RunRow);
-const decodeIteration = Schema.decodeUnknownEffect(IterationRecord);
+const IterationRow = Schema.Struct({
+  ...IterationRecord.fields,
+  validateOk: Schema.NullOr(Schema.BooleanFromBit),
+});
+const decodeIteration = Schema.decodeUnknownEffect(IterationRow);
 
 /** Human-readable log line, same emoji vocabulary as the bash runner. */
 export const formatLogLine = (e: RalphEvent): string | undefined => {
   const t = new Date(e.ts).toTimeString().slice(0, 8); // local time, like the bash runner
   switch (e.type) {
     case "run_started":
-      return `[${t}] 🚀 Ralph '${e.instance}' started (run=${e.run}, harness=${e.harness}, model=${e.model ?? "default"}, max_runs=${e.maxIterations}, dir=${e.dir})`;
+      return `[${t}] 🚀 Ralph '${e.instance}' started (run=${e.run}, harness=${e.harness}, model=${e.model ?? "default"}, mode=${e.mode}, max_runs=${e.maxIterations}, dir=${e.dir})`;
     case "iteration_started":
       return `[${t}] --- RUN ${e.iteration} ---`;
     case "session":
@@ -198,6 +209,21 @@ export const formatLogLine = (e: RalphEvent): string | undefined => {
       return `[${t}] 🧭 steer #${e.id} (${e.kind}): ${clip(e.text, 300)}`;
     case "iteration_finished":
       return `[${t}] --- RUN ${e.iteration} ${e.outcome.toUpperCase()} (${Math.round(e.durationMs / 1000)}s) ---`;
+    case "validate":
+      return e.ok
+        ? `[${t}] ✅ validate passed (${e.results.map((r) => r.command).join(", ")})`
+        : `[${t}] ❌ validate failed: ${e.results
+            .filter((r) => r.exitCode !== 0)
+            .map((r) => `${r.command} → ${r.exitCode === null ? "timeout" : `exit ${r.exitCode}`}`)
+            .join(", ")}`;
+    case "plan_status":
+      return e.error !== undefined
+        ? `[${t}] 🗺️  plan (${e.backend}): ${clip(e.error, 300)}`
+        : `[${t}] 🗺️  plan (${e.backend}): ${e.open} open, ${e.actionable} ready, ${e.total} total${e.changed ? " (changed)" : ""}`;
+    case "scope_violation":
+      return `[${t}] 🚧 out-of-scope changes: ${clip(e.files.join(", "), 300)}${e.diffPath === undefined ? "" : ` (diff: ${e.diffPath})`}`;
+    case "notice":
+      return `[${t}] ℹ️  ${e.text}`;
     case "rate_limit_sleep":
       return `[${t}] ⏳ Rate limited. Sleeping ${Math.round(e.seconds / 60)} minutes...`;
     case "run_finished":
@@ -321,10 +347,11 @@ export const makeStore = (root: string) =>
       append(p.join(runDir(id), "raw", `${iteration}.jsonl`), `${line}\n`);
 
     const writeIteration = (id: string, rec: IterationRecord) =>
-      sql`INSERT OR REPLACE INTO iterations ${sql.insert({ runId: id, ...rec })}`.pipe(
-        Effect.asVoid,
-        Effect.mapError(fail(`iterations/${id}`)),
-      );
+      sql`INSERT OR REPLACE INTO iterations ${sql.insert({
+        runId: id,
+        ...rec,
+        validateOk: rec.validateOk === null ? null : rec.validateOk ? 1 : 0,
+      })}`.pipe(Effect.asVoid, Effect.mapError(fail(`iterations/${id}`)));
 
     const addSteer = (id: string, kind: SteerKind, text: string) =>
       sql<{

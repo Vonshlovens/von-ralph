@@ -40,7 +40,7 @@ Options:
 Examples:
   cody
   cody "Fix lint errors"
-  cody "Refactor utils" -m gpt-5.5
+  cody "Refactor utils" -m gpt-6-astra
 
 By default, cody does not pass -m/--model to codex. That lets the Codex CLI use
 its configured/default model, so updating ~/.codex/config.toml or the CLI default

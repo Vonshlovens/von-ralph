@@ -12,6 +12,21 @@ export const HarnessId = Schema.Literals(["claude", "codex", "opencode", "gh"]);
 export type HarnessId = typeof HarnessId.Type;
 export const harnessIds: ReadonlyArray<HarnessId> = HarnessId.literals;
 
+/** What a run does each iteration: an arbitrary prompt, or one of the process modes. */
+export const RunMode = Schema.Literals(["run", "plan", "build", "reverse"]);
+export type RunMode = typeof RunMode.Type;
+
+export type PlanBackendId = "markdown" | "beads";
+
+export interface ValidateResult {
+  readonly command: string;
+  /** null = timed out */
+  readonly exitCode: number | null;
+  readonly durationMs: number;
+  /** Tail of combined stdout/stderr. */
+  readonly output: string;
+}
+
 export type ErrorKind = "auth" | "rate_limit" | "context" | "api" | "unknown";
 
 /** What a harness adapter emits while an iteration runs. */
@@ -45,6 +60,7 @@ export type LoopEvent =
   | HarnessEvent
   | {
       readonly type: "run_started";
+      readonly mode: RunMode;
       readonly harness: HarnessId;
       readonly model: string | null;
       readonly dir: string;
@@ -57,6 +73,30 @@ export type LoopEvent =
       readonly durationMs: number;
     }
   | { readonly type: "rate_limit_sleep"; readonly seconds: number }
+  /** Runner-side backpressure: the project's validate commands, run after an iteration. */
+  | {
+      readonly type: "validate";
+      readonly ok: boolean;
+      readonly results: ReadonlyArray<ValidateResult>;
+    }
+  /** Plan state after an iteration (or before the first one). */
+  | {
+      readonly type: "plan_status";
+      readonly backend: PlanBackendId | "specs";
+      readonly total: number;
+      readonly open: number;
+      /** Open items that can be worked on now (dependencies met, not blocked). */
+      readonly actionable: number;
+      readonly changed: boolean;
+      readonly error?: string | undefined;
+    }
+  /** A plan/reverse iteration changed files it must not touch. */
+  | {
+      readonly type: "scope_violation";
+      readonly files: ReadonlyArray<string>;
+      readonly diffPath?: string | undefined;
+    }
+  | { readonly type: "notice"; readonly text: string }
   | {
       readonly type: "steer_received";
       readonly id: number;
@@ -85,6 +125,20 @@ export type IterationOutcome = typeof IterationOutcome.Type;
 
 export const StopReason = Schema.Literals([
   "max_iterations",
+  /** `run` mode: the agent printed <promise>COMPLETE</promise>. */
+  "complete",
+  /** build: no open plan items left (and validation passes). */
+  "plan_complete",
+  /** build: open items remain but none can be worked on (blocked / waiting on a human). */
+  "plan_exhausted",
+  /** plan / reverse: an iteration left the plan (specs) unchanged. */
+  "plan_converged",
+  /** build: N iterations in a row without a commit or plan change. */
+  "no_progress",
+  /** build: runner-side validation failed N iterations in a row. */
+  "validate_failed",
+  /** plan / reverse: an iteration changed files outside what the mode allows. */
+  "scope_violation",
   "blocked",
   "rate_limited",
   "auth_failed",
@@ -126,6 +180,9 @@ export const Instance = Schema.Struct({
   startedAt: Schema.String,
   updatedAt: Schema.String,
   beadId: Schema.NullOr(Schema.String),
+  mode: RunMode,
+  /** `--scope` text for plan/build/reverse */
+  scope: Schema.NullOr(Schema.String),
 });
 export type Instance = typeof Instance.Type;
 
@@ -145,6 +202,10 @@ export const IterationRecord = Schema.Struct({
   costUsd: Schema.NullOr(Schema.Number),
   lastAssistant: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
+  /** Runner-side validation result; null = not run */
+  validateOk: Schema.NullOr(Schema.Boolean),
+  /** Open plan items after the iteration; null = no plan */
+  planOpen: Schema.NullOr(Schema.Number),
 });
 export type IterationRecord = typeof IterationRecord.Type;
 

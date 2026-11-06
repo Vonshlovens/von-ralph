@@ -6,14 +6,14 @@ Drive **Claude Code**, **OpenAI Codex**, **opencode** (sst/opencode), or **GitHu
 
 ## Scripts
 
-| Script | Description |
-|--------|-------------|
-| `ralph` | Main loop — runs a prompt N times with logging, PID tracking, and optional rate-limit recovery. Supports multiple harnesses via `-H`. |
-| `alph` | Single headless run (no loop), same `-H` harness flag |
-| `cody` | Single headless Codex run. Uses Codex CLI/config default model unless `-m` is supplied. |
-| `ralph-marathon` | Legacy infinite loop with rate-limit sleep (use `ralph --marathon` instead) |
-| `ralph-status` | Monitor running ralphs — list, tail logs, kill instances (preserves harness on restart) |
-| `rmux` / `ralph-tui` | TUI for launching and monitoring ralphs, with a harness picker in the spawn form |
+| Script               | Description                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `ralph`              | Main loop — runs a prompt N times with logging, PID tracking, and optional rate-limit recovery. Supports multiple harnesses via `-H`. |
+| `alph`               | Single headless run (no loop), same `-H` harness flag                                                                                 |
+| `cody`               | Single headless Codex run. Uses Codex CLI/config default model unless `-m` is supplied.                                               |
+| `ralph-marathon`     | Legacy infinite loop with rate-limit sleep (use `ralph --marathon` instead)                                                           |
+| `ralph-status`       | Monitor running ralphs — list, tail logs, kill instances (preserves harness on restart)                                               |
+| `rmux` / `ralph-tui` | TUI for launching and monitoring ralphs, with a harness picker in the spawn form                                                      |
 
 ## Quick start
 
@@ -72,6 +72,39 @@ bin/ralph-next restart kanban-worker -N 5
 - The TUI (`rmux`) reads the same database, launches through `ralph-next`, and
   steers with `s`.
 
+### The process: spec → plan → build
+
+`ralph-next` encodes the Huntley / Farr Ralph playbook as commands. Prompts
+live in the project (`.ralph/prompts/*.md`), are re-read every iteration, and
+accumulate "signs" as you tune the loop.
+
+```bash
+cd ~/proj
+ralph-next init                       # .ralph/ (ralph.toml, prompts), AGENTS.md, CLAUDE.md, specs/, plan
+ralph-next spec "billing"             # interactive Claude Code session: interview → specs/*.md (you own these)
+ralph-next reverse                    # brownfield alternative: derive specs from existing code
+ralph-next plan                       # gap analysis → plan; no code changes; stops when the plan stops changing
+ralph-next build --detach             # one plan item per iteration, validated by the runner, until the plan is done
+ralph-next watch build-proj           # watch it (this is where you learn which signs to add)
+ralph-next sign "Run the migrations before the tests"   # guardrail for the next iteration
+ralph-next report build-proj          # commits, files, validation, plan delta, cost, what needs you
+```
+
+- **Plan backends** (both first-class): with a `.beads/` directory the plan is
+  the Beads database (`bd ready` is the queue; `--bead <id>` builds a single
+  bead). Otherwise it is `.ralph/plan.json` with a generated
+  `IMPLEMENTATION_PLAN.md`; agents edit it with `ralph-next task …`
+  (`list --ready`, `add`, `start`, `done --note`, `block --note`, `learn`).
+- **Backpressure**: `[validate].commands` in `.ralph/ralph.toml` run after
+  every build iteration; failures go into the next prompt, and three in a row
+  stop the run.
+- **Stop reasons**: `plan_complete`, `plan_exhausted` (only blocked items
+  left), `plan_converged` (plan/reverse), `no_progress`, `validate_failed`,
+  `scope_violation` (a plan iteration touched code; the diff is kept), plus the
+  M1 ones. Exit code 0 = done, 3 = ended but needs a human, 1 = failed.
+- `ralph-next run "<prompt>"` stays the free-form loop; it ends early when the
+  agent prints `<promise>COMPLETE</promise>`.
+
 Develop with `pnpm test` (Vite+ / vitest) and `pnpm check` (tsc + oxlint).
 
 ## Harnesses
@@ -80,24 +113,25 @@ Develop with `pnpm test` (Vite+ / vitest) and `pnpm check` (tsc + oxlint).
 non-interactive / full-autonomy mode (no per-action permission prompts) and its
 JSONL event stream is parsed into a uniform log.
 
-| Harness | Binary | Install | Default model | Reasoning |
-|---------|--------|---------|---------------|-----------|
-| `claude` (default) | `claude` | Claude Code | `opus` | — |
-| `codex` | `codex` | `npm i -g @openai/codex` | codex config default | `-c model_reasoning_effort=xhigh` |
-| `opencode` | `opencode` | see https://opencode.ai | `openai/gpt-5.5` | `--variant max` |
-| `gh` | `copilot` | `npm i -g @github/copilot` | copilot default | `--effort high` |
+| Harness            | Binary     | Install                    | Default model                               | Reasoning                         |
+| ------------------ | ---------- | -------------------------- | ------------------------------------------- | --------------------------------- |
+| `claude` (default) | `claude`   | Claude Code                | `opus` (Opus 5.5; `-m fable` for Fable 5.1) | Claude Code default               |
+| `codex`            | `codex`    | `npm i -g @openai/codex`   | codex config default                        | `-c model_reasoning_effort=xhigh` |
+| `opencode`         | `opencode` | see https://opencode.ai    | `openai/gpt-6.1-terra`                      | `--variant xhigh`                 |
+| `gh`               | `copilot`  | `npm i -g @github/copilot` | copilot default                             | `--effort high`                   |
 
 ```bash
 ralph "Refactor utils" -H codex
 cody "Refactor utils"
-cody "Refactor utils" -m gpt-5.5
-ralph "Add tests" -H opencode -m openai/gpt-5.5
+cody "Refactor utils" -m gpt-6-astra
+ralph "Add tests" -H opencode -m openai/gpt-6.1-terra
 ralph "Triage TODOs" -H gh
 ```
 
 Notes:
+
 - **codex** uses `--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check` and `--json` event streaming.
-- **cody** is a Codex-only `alph` variant. By default it omits `-m/--model`, so Codex uses the CLI/config default model. Pass `-m gpt-5.5` to pin the current recommended Codex model explicitly.
+- **cody** is a Codex-only `alph` variant. By default it omits `-m/--model`, so Codex uses the CLI/config default model. Pass `-m gpt-6-astra` to pin a model explicitly (pinned ids go stale; gpt-5.5 has been retired for ChatGPT logins).
 - **opencode** uses `opencode run --format json --auto`. Assistant text, tool output, step summaries, and API errors are parsed into the log.
 - **gh** (GitHub Copilot CLI's `copilot` binary, not `gh copilot`) is invoked with `--allow-all-tools --allow-all-paths --allow-all-urls --reasoning-effort high`. The JSONL schema is undocumented and shifting; the parser is best-effort with raw-line fallback.
 - Auth is per-harness (use each CLI's normal login flow before launching).
@@ -105,6 +139,7 @@ Notes:
 ## Claude Code skill
 
 The `/ralph` skill lets an interactive Claude Code session supervise ralphs:
+
 - `/ralph status` — check running instances
 - `/ralph spawn` — launch a new ralph
 - `/ralph review` — analyze what a ralph accomplished

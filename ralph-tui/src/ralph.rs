@@ -45,7 +45,7 @@ pub const HARNESSES: &[&str] = &["claude", "codex", "opencode", "gh"];
 pub fn default_model_for_harness(harness: &str) -> &'static str {
     match harness {
         "codex" => "",
-        "opencode" => "openai/gpt-5.5",
+        "opencode" => "openai/gpt-6.1-terra",
         "gh" => "",
         _ => "opus",
     }

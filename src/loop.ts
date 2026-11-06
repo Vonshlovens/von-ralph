@@ -3,7 +3,7 @@
  * record everything, and stop on a clear, recorded reason.
  */
 import { Console, Duration, Effect, Option, Ref, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner } from "effect/process";
 import * as nodePath from "node:path";
 import {
   type HarnessEvent,
@@ -13,11 +13,63 @@ import {
   type IterationRecord,
   type LoopEvent,
   type RalphEvent,
+  type RunMode,
+  type StateError,
   type StopReason,
   clip,
 } from "./domain.ts";
+import { head as gitHead } from "./git.ts";
 import { type Harness, checkBinary } from "./harness.ts";
 import { Store, formatLogLine, newRunId } from "./store.ts";
+
+type Emit = (e: LoopEvent) => Effect.Effect<void, StateError>;
+
+export interface ReviewInput {
+  readonly iteration: number;
+  readonly headBefore: string | null;
+  readonly headAfter: string | null;
+  readonly lastAssistant: string | null;
+  /** Where the runner may write artifacts for this run (diffs, reports). */
+  readonly runDir: string;
+  readonly emit: Emit;
+}
+
+export interface Review {
+  /** End the run now, for this reason. */
+  readonly stop: StopReason | null;
+  /** Prepended to the next iteration's prompt ("runner feedback"). */
+  readonly feedback: ReadonlyArray<string>;
+  readonly validateOk: boolean | null;
+  readonly planOpen: number | null;
+}
+
+/**
+ * What makes a mode (run / plan / build / reverse) different. The loop calls
+ * `preflight` once, then per iteration `begin` → `prompt` → harness → `review`
+ * (review only after a `completed` iteration).
+ */
+export interface ModePolicy {
+  readonly id: RunMode;
+  readonly preflight: (
+    emit: Emit,
+  ) => Effect.Effect<StopReason | null, StateError, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly begin: (
+    iteration: number,
+  ) => Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly prompt: (iteration: number) => Effect.Effect<string, StateError>;
+  readonly review: (
+    input: ReviewInput,
+  ) => Effect.Effect<Review, StateError, ChildProcessSpawner.ChildProcessSpawner>;
+}
+
+/** The plain `run` mode (also exported from modes.ts with the sentinel check). */
+const fixedPrompt = (prompt: string): ModePolicy => ({
+  id: "run",
+  preflight: () => Effect.succeed(null),
+  begin: () => Effect.void,
+  prompt: () => Effect.succeed(prompt),
+  review: () => Effect.succeed({ stop: null, feedback: [], validateOk: null, planOpen: null }),
+});
 
 export interface LoopConfig {
   readonly name: string;
@@ -26,7 +78,11 @@ export interface LoopConfig {
   readonly model: string | null;
   readonly effort: string | null;
   readonly dir: string;
+  /** The prompt (run mode) or a description of it (process modes); stored on the run. */
   readonly prompt: string;
+  /** Mode behavior; default: send `prompt` unchanged every iteration. */
+  readonly policy?: ModePolicy | undefined;
+  readonly scope?: string | null | undefined;
   /** 0 = unlimited */
   readonly maxIterations: number;
   readonly marathon: boolean;
@@ -117,36 +173,45 @@ export const outcomeOf = (
   return "completed";
 };
 
-const gitHead = (dir: string) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const out = yield* spawner.string(
-      ChildProcess.make("git", ["rev-parse", "HEAD"], {
-        cwd: dir,
-        stdin: "ignore",
-        stderr: "ignore",
-      }),
-    );
-    const sha = out.trim();
-    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
-  }).pipe(Effect.orElseSucceed(() => null));
-
 const now = () => new Date().toISOString();
 
-/** Append operator steering notes to the base prompt for one iteration. Exported for tests. */
-export const composePrompt = (base: string, notes: ReadonlyArray<string>): string =>
-  notes.length === 0
-    ? base
-    : `${base}\n\n## Operator notes for this iteration\n\nThe human supervising this loop added:\n\n${notes
-        .map((n) => `- ${n}`)
-        .join("\n")}`;
+/**
+ * One iteration's prompt: the base prompt, then runner feedback from the
+ * previous iteration, then operator steering notes. Exported for tests.
+ */
+export const composePrompt = (
+  base: string,
+  notes: ReadonlyArray<string>,
+  feedback: ReadonlyArray<string> = [],
+): string => {
+  let out = base;
+  if (feedback.length > 0) {
+    out += `\n\n## Runner feedback from the previous iteration\n\n${feedback.join("\n\n")}`;
+  }
+  if (notes.length > 0) {
+    out += `\n\n## Operator notes for this iteration\n\nThe human supervising this loop added:\n\n${notes
+      .map((n) => `- ${n}`)
+      .join("\n")}`;
+  }
+  return out;
+};
 
-const statusFor = (reason: StopReason): Instance["status"] =>
-  reason === "interrupted" || reason === "operator_stop"
-    ? "stopped"
-    : reason === "max_iterations"
-      ? "finished"
-      : "failed";
+const statusFor = (reason: StopReason): Instance["status"] => {
+  switch (reason) {
+    case "interrupted":
+    case "operator_stop":
+      return "stopped";
+    case "max_iterations":
+    case "complete":
+    case "plan_complete":
+    case "plan_exhausted":
+    case "plan_converged":
+    case "no_progress":
+      return "finished";
+    default:
+      return "failed";
+  }
+};
 
 export const runLoop = (cfg: LoopConfig) =>
   Effect.gen(function* () {
@@ -154,6 +219,7 @@ export const runLoop = (cfg: LoopConfig) =>
     yield* checkBinary(cfg.harness);
     const dir = nodePath.resolve(cfg.dir);
     const runId = newRunId();
+    const policy = cfg.policy ?? fixedPrompt(cfg.prompt);
 
     yield* store.create({
       id: runId,
@@ -173,6 +239,8 @@ export const runLoop = (cfg: LoopConfig) =>
       startedAt: now(),
       updatedAt: now(),
       beadId: cfg.beadId,
+      mode: policy.id,
+      scope: cfg.scope ?? null,
     });
 
     const emit = (iteration: number, e: LoopEvent) =>
@@ -190,6 +258,7 @@ export const runLoop = (cfg: LoopConfig) =>
         const startedAt = now();
         const t0 = Date.now();
         const headBefore = yield* gitHead(dir);
+        yield* policy.begin(n);
         yield* emit(n, { type: "iteration_started", prompt: clip(prompt, 500) });
         const tally = newTally();
         const drive = cfg.harness
@@ -215,8 +284,14 @@ export const runLoop = (cfg: LoopConfig) =>
               }),
             ),
           );
-        const record = (outcome: IterationOutcome) =>
+        let recorded = false;
+        const record = (
+          outcome: IterationOutcome,
+          review: Review | null,
+          headAfterKnown?: string | null,
+        ) =>
           Effect.gen(function* () {
+            recorded = true;
             const durationMs = Date.now() - t0;
             const rec: IterationRecord = {
               iteration: n,
@@ -227,13 +302,15 @@ export const runLoop = (cfg: LoopConfig) =>
               sessionId: tally.sessionId,
               attachId: tally.attachId,
               headBefore,
-              headAfter: yield* gitHead(dir),
+              headAfter: headAfterKnown === undefined ? yield* gitHead(dir) : headAfterKnown,
               inputTokens: tally.inputTokens,
               outputTokens: tally.outputTokens,
               costUsd:
                 tally.costTotal ?? (tally.costIncremental > 0 ? tally.costIncremental : null),
               lastAssistant: tally.lastAssistant === null ? null : clip(tally.lastAssistant, 4000),
               error: tally.lastError,
+              validateOk: review?.validateOk ?? null,
+              planOpen: review?.planOpen ?? null,
             };
             yield* store.writeIteration(runId, rec);
             yield* emit(n, { type: "iteration_finished", outcome, durationMs });
@@ -248,16 +325,34 @@ export const runLoop = (cfg: LoopConfig) =>
                 Effect.map(Option.isNone),
               )
             : drive.pipe(Effect.as(false));
-        const timedOut = yield* bounded.pipe(
-          Effect.onInterrupt(() => record("interrupted").pipe(Effect.ignore)),
+        const body = Effect.gen(function* () {
+          const timedOut = yield* bounded;
+          if (timedOut) {
+            tally.lastError = `iteration timed out after ${cfg.iterationTimeoutSeconds}s`;
+            yield* emit(n, { type: "error", kind: "unknown", message: tally.lastError });
+          }
+          const outcome: IterationOutcome = timedOut ? "timed_out" : outcomeOf(tally);
+          const headAfter = yield* gitHead(dir);
+          // Runner-side review (validation, plan checks) only for iterations that finished.
+          const review =
+            outcome === "completed"
+              ? yield* policy.review({
+                  iteration: n,
+                  headBefore,
+                  headAfter,
+                  lastAssistant: tally.lastAssistant,
+                  runDir: store.runDir(runId),
+                  emit: (e) => emit(n, e),
+                })
+              : null;
+          yield* record(outcome, review, headAfter);
+          return { outcome, review };
+        });
+        return yield* body.pipe(
+          Effect.onInterrupt(() =>
+            recorded ? Effect.void : record("interrupted", null).pipe(Effect.ignore),
+          ),
         );
-        if (timedOut) {
-          tally.lastError = `iteration timed out after ${cfg.iterationTimeoutSeconds}s`;
-          yield* emit(n, { type: "error", kind: "unknown", message: tally.lastError });
-        }
-        const outcome: IterationOutcome = timedOut ? "timed_out" : outcomeOf(tally);
-        yield* record(outcome);
-        return outcome;
       });
 
     const iterations = yield* Ref.make(0);
@@ -265,12 +360,16 @@ export const runLoop = (cfg: LoopConfig) =>
     const loop = Effect.gen(function* () {
       yield* emit(0, {
         type: "run_started",
+        mode: policy.id,
         harness: cfg.harness.id,
         model: cfg.model,
         dir,
         maxIterations: cfg.maxIterations,
       });
+      const early = yield* policy.preflight((e) => emit(0, e));
+      if (early !== null) return early;
       let consecutiveFailures = 0;
+      let feedback: ReadonlyArray<string> = [];
       for (let n = 1; ; n++) {
         if (cfg.maxIterations > 0 && n > cfg.maxIterations) return "max_iterations" as StopReason;
         // Steering is consumed only at iteration boundaries.
@@ -280,12 +379,14 @@ export const runLoop = (cfg: LoopConfig) =>
         }
         if (steers.some((st) => st.kind === "stop")) return "operator_stop" as StopReason;
         const prompt = composePrompt(
-          cfg.prompt,
+          yield* policy.prompt(n),
           steers.filter((st) => st.kind === "note").map((st) => st.text),
+          feedback,
         );
         yield* store.update(runId, { currentIteration: n });
-        const outcome = yield* runIteration(n, prompt);
+        const { outcome, review } = yield* runIteration(n, prompt);
         yield* Ref.set(iterations, n);
+        feedback = review?.feedback ?? [];
         switch (outcome) {
           case "blocked":
             return "blocked" as StopReason;
@@ -309,6 +410,7 @@ export const runLoop = (cfg: LoopConfig) =>
             consecutiveFailures = 0;
             break;
         }
+        if (review?.stop != null) return review.stop;
         yield* Effect.sleep(cfg.pauseBetween);
       }
     });

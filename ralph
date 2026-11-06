@@ -42,7 +42,7 @@ Options:
 Harness defaults (override with -m):
   claude    opus
   codex     (codex config default) (reasoning: xhigh)
-  opencode  openai/gpt-5.5                    (variant: max)
+  opencode  openai/gpt-6.1-terra              (variant: xhigh)
   gh        (copilot default)  (effort:    high)
 
 Examples:
@@ -51,7 +51,7 @@ Examples:
   ralph "Fix all lint errors" -d ~/my-project -n lint-fixer
   ralph --marathon                                  # Infinite with rate-limit recovery
   ralph "Refactor utils" -H codex                   # Drive OpenAI codex instead
-  ralph "Add tests" -H opencode -m openai/gpt-5.5
+  ralph "Add tests" -H opencode -m openai/gpt-6.1-terra
 USAGE
   exit 0
 }
@@ -106,8 +106,8 @@ fi
 # Validate harness and resolve default model
 case "$HARNESS" in
   claude)   DEFAULT_MODEL="opus" ;;
-  codex)    DEFAULT_MODEL="" ;;  # codex config default (explicit gpt-5.x ids are rejected on ChatGPT logins)
-  opencode) DEFAULT_MODEL="openai/gpt-5.5" ;;
+  codex)    DEFAULT_MODEL="" ;;  # codex config default (pinned ids go stale)
+  opencode) DEFAULT_MODEL="openai/gpt-6.1-terra" ;;
   gh)       DEFAULT_MODEL="" ;;  # copilot default (explicit ids go stale)
   *)
     echo "Error: unknown harness '$HARNESS' (expected: claude, codex, opencode, gh)"
@@ -249,7 +249,7 @@ run_harness() {
         --format json \
         --auto \
         --model "$model" \
-        --variant max \
+        --variant xhigh \
         --print-logs --log-level ERROR \
         "$prompt" </dev/null 2>/dev/null \
       | jq --unbuffered -r '

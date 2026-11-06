@@ -149,8 +149,8 @@ export const codex: Harness = {
   id: "codex",
   binary: "codex",
   installHint: "npm install -g @openai/codex",
-  // Codex rejects explicit gpt-5.x ids on ChatGPT-account logins (seen 2026-11-06);
-  // omit -m so codex uses its configured default, like `cody`.
+  // Omit -m so codex follows ~/.codex/config.toml (gpt-6-astra as of 2026-11-06), like
+  // `cody`; pinned ids go stale (gpt-5.5 was retired for ChatGPT logins).
   defaultModel: null,
   defaultEffort: "xhigh",
   run: (i) =>
@@ -174,8 +174,9 @@ export const opencode: Harness = {
   id: "opencode",
   binary: "opencode",
   installHint: "See https://opencode.ai",
-  defaultModel: "openai/gpt-5.5",
-  defaultEffort: "max",
+  // Newest OpenAI model in `opencode models` as of 2026-11-06; its variants are none..xhigh.
+  defaultModel: "openai/gpt-6.1-terra",
+  defaultEffort: "xhigh",
   run: (i) =>
     runJsonlProcess(
       "opencode",

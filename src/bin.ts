@@ -6,98 +6,22 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Layer, Option, Schedule } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { build, init, plan, reverse, sign, spec } from "./cli/process.ts";
+import { report } from "./cli/report.ts";
+import { autoName, exitCodeFor, nameArg, runArgv, spawnDetached } from "./cli/shared.ts";
+import { task } from "./cli/task.ts";
 import { type HarnessId, type Instance, StateError, harnessIds } from "./domain.ts";
 import { checkBinary } from "./harness.ts";
 import { listLegacy } from "./legacy.ts";
 import { defaults, runLoop } from "./loop.ts";
+import { runPolicy } from "./modes.ts";
 import { harnesses } from "./registry.ts";
 import * as StoreModule from "./store.ts";
 import { NAME_RE, Store, formatLogLine, isAlive } from "./store.ts";
 
-const VERSION = "0.3.0";
-const SCRIPT = fileURLToPath(import.meta.url);
-
-const nameArg = Argument.String("name").pipe(
-  Argument.withDescription("Ralph name (most recent run) or run id"),
-);
-
-const autoName = () =>
-  `ralph-${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${process.pid}`;
-
-/** Re-exec this CLI detached from the terminal; early errors go to `<root>/launch/<name>.out`. */
-const spawnDetached = (argv: ReadonlyArray<string>, name: string, cwd: string) =>
-  Effect.gen(function* () {
-    const store = yield* Store;
-    const launchDir = path.join(store.root, "launch");
-    fs.mkdirSync(launchDir, { recursive: true });
-    const outPath = path.join(launchDir, `${name}.out`);
-    const out = fs.openSync(outPath, "w");
-    const since = new Date().toISOString();
-    const child = spawn(process.execPath, [...process.execArgv, SCRIPT, ...argv], {
-      cwd,
-      detached: true,
-      stdio: ["ignore", out, out],
-    });
-    child.unref();
-    fs.closeSync(out);
-    // Wait for the child to register its run (or die trying).
-    const started = yield* store.get(name).pipe(
-      Effect.flatMap((r) =>
-        r.startedAt >= since
-          ? Effect.succeed(r)
-          : Effect.fail(new StateError({ path: name, reason: "not started" })),
-      ),
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-      Effect.option,
-    );
-    if (Option.isNone(started)) {
-      const err = fs.existsSync(outPath) ? fs.readFileSync(outPath, "utf8").trim() : "";
-      return yield* new StateError({
-        path: name,
-        reason: `did not start${err === "" ? "" : `:\n${err}`}`,
-      });
-    }
-    const r = started.value;
-    yield* Console.log(
-      `🚀 ${r.name} started (run ${r.id}, pid ${r.pid})\n   log ${store.logPath(r.id)}`,
-    );
-  });
-
-/** CLI args that reproduce a run's configuration (used by --detach and restart). */
-const runArgv = (r: {
-  readonly name: string;
-  readonly prompt: string;
-  readonly dir: string;
-  readonly harness: HarnessId;
-  readonly model: string | null;
-  readonly effort: string | null;
-  readonly maxIterations: number;
-  readonly marathon: boolean;
-  readonly iterationTimeoutSeconds: number;
-  readonly beadId: string | null;
-}): Array<string> => [
-  "run",
-  "--name",
-  r.name,
-  "--dir",
-  r.dir,
-  "--harness",
-  r.harness,
-  ...(r.model === null ? [] : ["--model", r.model]),
-  ...(r.effort === null ? [] : ["--effort", r.effort]),
-  "--max",
-  String(r.maxIterations),
-  "--timeout",
-  String(Math.round(r.iterationTimeoutSeconds / 60)),
-  ...(r.marathon ? ["--marathon"] : []),
-  ...(r.beadId === null ? [] : ["--bead", r.beadId]),
-  "--quiet",
-  r.prompt,
-];
+const VERSION = "0.4.0";
 
 const run = Command.make(
   "run",
@@ -183,20 +107,27 @@ const run = Command.make(
       };
       if (a.detach) {
         yield* checkBinary(harness);
-        return yield* spawnDetached(runArgv({ ...cfg, harness: harness.id }), name, cfg.dir);
+        return yield* spawnDetached(
+          runArgv({ ...cfg, harness: harness.id, mode: "run", scope: null }),
+          name,
+          cfg.dir,
+        );
       }
       const { reason } = yield* runLoop({
         ...cfg,
+        policy: runPolicy(cfg.prompt),
         rateLimitSleepSeconds: defaults.rateLimitSleepSeconds,
         pauseBetween: defaults.pauseBetween,
         maxConsecutiveFailures: defaults.maxConsecutiveFailures,
         echo: !a.quiet,
       });
-      if (reason !== "max_iterations" && reason !== "operator_stop") {
-        process.exitCode = reason === "interrupted" ? 130 : 1;
-      }
+      process.exitCode = exitCodeFor(reason);
     }),
-).pipe(Command.withDescription("Run a prompt in a loop, one fresh agent session per iteration"));
+).pipe(
+  Command.withDescription(
+    "Run a prompt in a loop, one fresh agent session per iteration (ends early on <promise>COMPLETE</promise>)",
+  ),
+);
 
 const stateLabel = (r: Instance) => {
   if (r.status === "running")
@@ -241,7 +172,7 @@ const status = Command.make(
         const prompt = r.prompt.replace(/\s+/g, " ");
         yield* Console.log(
           [
-            `${r.name}  ${stateLabel(r)}  run ${r.id} · pid ${r.pid}`,
+            `${r.name}  ${stateLabel(r)}  ${r.mode} · run ${r.id} · pid ${r.pid}`,
             `  harness ${r.harness} · model ${model}${effort}${bead}`,
             `  dir     ${r.dir}`,
             `  iter    ${r.currentIteration}${max}${last}${cost} · started ${r.startedAt}`,
@@ -281,7 +212,7 @@ const show = Command.make(
         return yield* Console.log(JSON.stringify(out, null, 2));
       }
       yield* Console.log(
-        `${r.name}  ${stateLabel(r)}  run ${r.id}\n  dir ${r.dir}\n  prompt:\n${r.prompt.replace(/^/gm, "    ")}\n`,
+        `${r.name}  ${stateLabel(r)}  ${r.mode} · run ${r.id}\n  dir ${r.dir}\n  prompt:\n${r.prompt.replace(/^/gm, "    ")}\n`,
       );
       for (const i of its) {
         const moved =
@@ -290,13 +221,46 @@ const show = Command.make(
             : "";
         const cost = i.costUsd === null ? "" : ` · $${i.costUsd.toFixed(3)}`;
         const attach = i.attachId === null ? "" : ` · claude attach ${i.attachId}`;
+        const val = i.validateOk === null ? "" : i.validateOk ? " · ✅ valid" : " · ❌ invalid";
+        const planOpen = i.planOpen === null ? "" : ` · plan ${i.planOpen} open`;
         const err = i.error === null ? "" : `\n      ⚠️  ${i.error.slice(0, 200)}`;
         yield* Console.log(
-          `  #${i.iteration} ${i.outcome.padEnd(12)} ${Math.round(i.durationMs / 1000)}s · in ${i.inputTokens} out ${i.outputTokens}${cost}${moved}${attach}${err}`,
+          `  #${i.iteration} ${i.outcome.padEnd(12)} ${Math.round(i.durationMs / 1000)}s · in ${i.inputTokens} out ${i.outputTokens}${cost}${moved}${val}${planOpen}${attach}${err}`,
         );
       }
     }),
 ).pipe(Command.withDescription("Show a run and its iterations (outcomes, tokens, cost, commits)"));
+
+const tailRun = (a: { readonly name: string; readonly lines: number; readonly follow: boolean }) =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const r = yield* store.get(a.name);
+    const file = store.logPath(r.id);
+    const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    yield* Console.log(
+      text
+        .split("\n")
+        .filter((l) => l !== "")
+        .slice(-a.lines)
+        .join("\n"),
+    );
+    if (!a.follow) return;
+    // Follow the event stream until the run ends.
+    let after = (yield* store.events(r.id, { limit: 1_000_000 })).at(-1)?.id ?? 0;
+    while (true) {
+      yield* Effect.sleep("1 second");
+      for (const e of yield* store.events(r.id, { afterId: after })) {
+        after = e.id;
+        const line = formatLogLine(e.event);
+        if (line !== undefined) yield* Console.log(line);
+        if (e.event.type === "run_finished") return;
+      }
+      const cur = yield* store.get(r.id);
+      if (cur.status === "running" && !isAlive(cur.pid)) {
+        return yield* Console.log("🔴 process is gone");
+      }
+    }
+  });
 
 const tail = Command.make(
   "tail",
@@ -305,37 +269,18 @@ const tail = Command.make(
     lines: Flag.Int("lines").pipe(Flag.withAlias("n"), Flag.withDefault(50)),
     follow: Flag.Boolean("follow").pipe(Flag.withAlias("f"), Flag.withDefault(false)),
   },
-  (a) =>
-    Effect.gen(function* () {
-      const store = yield* Store;
-      const r = yield* store.get(a.name);
-      const file = store.logPath(r.id);
-      const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-      yield* Console.log(
-        text
-          .split("\n")
-          .filter((l) => l !== "")
-          .slice(-a.lines)
-          .join("\n"),
-      );
-      if (!a.follow) return;
-      // Follow the event stream until the run ends.
-      let after = (yield* store.events(r.id, { limit: 1_000_000 })).at(-1)?.id ?? 0;
-      while (true) {
-        yield* Effect.sleep("1 second");
-        for (const e of yield* store.events(r.id, { afterId: after })) {
-          after = e.id;
-          const line = formatLogLine(e.event);
-          if (line !== undefined) yield* Console.log(line);
-          if (e.event.type === "run_finished") return;
-        }
-        const cur = yield* store.get(r.id);
-        if (cur.status === "running" && !isAlive(cur.pid)) {
-          return yield* Console.log("🔴 process is gone");
-        }
-      }
-    }),
+  tailRun,
 ).pipe(Command.withDescription("Print a run's log; -f follows live events until it ends"));
+
+const watch = Command.make(
+  "watch",
+  { name: nameArg, lines: Flag.Int("lines").pipe(Flag.withAlias("n"), Flag.withDefault(20)) },
+  (a) => tailRun({ ...a, follow: true }),
+).pipe(
+  Command.withDescription(
+    "Follow a run live (tail -f): watching is how you learn what signs to add",
+  ),
+);
 
 const steer = Command.make(
   "steer",
@@ -439,6 +384,7 @@ const restart = Command.make(
       }
       yield* checkBinary(harnesses[r.harness]);
       const cfg = { ...r, maxIterations: Option.getOrElse(a.max, () => r.maxIterations) };
+      // Process modes re-read ralph.toml and the prompts; run mode replays the prompt.
       yield* spawnDetached(runArgv(cfg), r.name, r.dir);
     }),
 ).pipe(Command.withDescription("Start a new run with a previous run's settings (detached)"));
@@ -476,9 +422,42 @@ const doctor = Command.make("doctor", {}, () =>
 
 const root = Command.make("ralph-next").pipe(
   Command.withDescription("Headless agent loops (Ralph Wiggum technique)"),
-  Command.withSubcommands([run, status, show, tail, steer, stop, restart, clean, doctor]),
+  Command.withSubcommands([
+    init,
+    spec,
+    reverse,
+    plan,
+    build,
+    run,
+    task,
+    status,
+    show,
+    report,
+    tail,
+    watch,
+    steer,
+    sign,
+    stop,
+    restart,
+    clean,
+    doctor,
+  ]),
 );
 
 const MainLive = StoreModule.layer().pipe(Layer.provideMerge(NodeServices.layer));
 
-Command.run(root, { version: VERSION }).pipe(Effect.provide(MainLive), NodeRuntime.runMain);
+/** Our own errors are expected outcomes: one clean line on stderr, exit 1. */
+const report1 = (e: { readonly message: string }) =>
+  Effect.sync(() => {
+    process.stderr.write(`ralph-next: ${e.message}\n`);
+    process.exitCode = 1;
+  });
+
+Command.run(root, { version: VERSION }).pipe(
+  Effect.catchTags({
+    StateError: report1,
+    HarnessUnavailable: report1,
+  }),
+  Effect.provide(MainLive),
+  NodeRuntime.runMain,
+);
