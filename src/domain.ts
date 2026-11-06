@@ -194,6 +194,7 @@ export const IterationRecord = Schema.Struct({
   finishedAt: Schema.String,
   durationMs: Schema.Number,
   sessionId: Schema.NullOr(Schema.String),
+  /** Legacy Claude ID or hc: JSON locator; render through attachCommand. */
   attachId: Schema.NullOr(Schema.String),
   headBefore: Schema.NullOr(Schema.String),
   headAfter: Schema.NullOr(Schema.String),

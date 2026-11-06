@@ -58,7 +58,7 @@ const claudeErrorKind = (code: unknown, text: string): ErrorKind => {
 
 /**
  * Claude Code session transcript (`~/.claude/projects/…/<id>.jsonl`), tailed
- * while a background session runs. `assistant`/`user` entries carry an
+ * while an interactive session runs. `assistant`/`user` entries carry an
  * Anthropic `message`; the format is internal to Claude Code, so unknown
  * entries are ignored (they stay in the raw file).
  */

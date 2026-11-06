@@ -69,6 +69,11 @@ Rules that matter for a runner:
 
 ### 1.2 `claude -p` vs Claude Code sessions
 
+Implementation update (2026-11-06): all harnesses now use interactive CLIs in
+Herdr Core terminals. Claude uses normal CLI mode, which passes Underclass's
+existing client check. The background-mode findings below are historical;
+see the README for current launch flags, event tracking, and lifecycle.
+
 - `claude -p` / Agent SDK usage is the category Anthropic tried to move off
   subscription limits (announced May 13 2026 for June 15, **paused** June 15;
   "advance notice" promised before any future change). `--bare` "will become
@@ -250,8 +255,9 @@ one-item `ralph build` against a Bead; a Beadsmith "File"/elaborate is a
 ### 2.6 Monitoring is part of the process
 
 - `ralph watch <name>` — follow normalized events live.
-- Claude iterations are real sessions: `claude attach <id>` to watch or take
-  over any iteration; `claude --resume <sessionId>` afterwards.
+- Every harness runs in a real hc terminal: use the `hc attach` command in
+  the log to watch or take over a running iteration; use its native resume
+  command afterwards.
 - `ralph report <name>` — commits, files, validate results, cost, plan delta,
   open questions. (The July record's "read-only run report".)
 - `ralph sign <name> "<text>"` — append a guardrail to `.ralph/prompts/build.md`

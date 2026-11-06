@@ -1,3 +1,4 @@
+import { attachCommand } from "./hc.ts";
 /**
  * Ralph state: SQLite (WAL) at `$RALPH_HOME/ralph.db` (default `~/.ralph/v2`),
  * plus per-run files for bulky text:
@@ -190,7 +191,7 @@ export const formatLogLine = (e: RalphEvent): string | undefined => {
     case "iteration_started":
       return `[${t}] --- RUN ${e.iteration} ---`;
     case "session":
-      return `[${t}] 🧵 session ${e.sessionId}${e.attachId === undefined ? "" : ` (claude attach ${e.attachId})`}`;
+      return `[${t}] 🧵 session ${e.sessionId}${e.attachId === undefined ? "" : ` (${attachCommand(e.attachId)})`}`;
     case "assistant":
       return `💬 ${e.text}`;
     case "tool_call":

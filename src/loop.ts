@@ -316,7 +316,7 @@ export const runLoop = (cfg: LoopConfig) =>
             yield* emit(n, { type: "iteration_finished", outcome, durationMs });
           });
         // A timeout interrupts only the inner stream (running the harness finalizers:
-        // kill the process / stop the Claude session). An outside stop interrupts
+        // stop the iteration's hc terminal). An outside stop interrupts
         // the whole iteration, which is recorded as `interrupted`.
         const bounded =
           cfg.iterationTimeoutSeconds > 0
@@ -426,6 +426,7 @@ export const runLoop = (cfg: LoopConfig) =>
       Effect.tap(finish),
       Effect.onInterrupt(() => finish("interrupted")),
       Effect.tapError(() => finish("harness_failed")),
+      Effect.tapDefect(() => finish("harness_failed")),
       Effect.map((reason) => ({ runId, reason })),
     );
   });

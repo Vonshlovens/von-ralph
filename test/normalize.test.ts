@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import { parseBackgroundedId, launchArgs } from "../src/claudeBg.ts";
 import { classifyError } from "../src/domain.ts";
 import { outcomeOf } from "../src/loop.ts";
 import { claudeParser, codexParser, copilotParser, opencodeParser } from "../src/normalize.ts";
@@ -136,24 +135,6 @@ describe("copilot", () => {
     ]);
     expect(p({ type: "assistant.message_delta", data: { deltaContent: "h" } })).toEqual([]);
     expect(p({ type: "result", exitCode: 0 })).toEqual([{ type: "turn_end" }]);
-  });
-});
-
-describe("claude --bg helpers", () => {
-  it("parses the short id from real --bg output", () => {
-    const out =
-      "warning: …\nStarting background service…\nbackgrounded · 406a60fa · ralph-bgprobe\n  claude agents             list sessions\n";
-    expect(parseBackgroundedId(out)).toBe("406a60fa");
-    expect(parseBackgroundedId("error: not logged in")).toBeUndefined();
-  });
-
-  it("builds launch args without -p and with bg isolation disabled", () => {
-    const args = launchArgs({ prompt: "do it", model: "opus", effort: "high", sessionName: "w-1" });
-    expect(args).not.toContain("-p");
-    expect(args.slice(0, 3)).toEqual(["--bg", "-n", "w-1"]);
-    expect(args).toContain("bypassPermissions");
-    expect(args.at(-1)).toBe("do it");
-    expect(args[args.indexOf("--settings") + 1]).toBe('{"worktree":{"bgIsolation":"none"}}');
   });
 });
 

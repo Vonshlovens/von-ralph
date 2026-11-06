@@ -51,7 +51,9 @@ clean` (or reusing the name) marks it `failed` / `crashed`.
 PK `(run_id, iteration)`. `outcome` is `completed` \| `failed` \| `blocked` \|
 `rate_limited` \| `auth_failed` \| `timed_out` \| `interrupted`. Also
 `started_at`, `finished_at`, `duration_ms`, `session_id` (harness session /
-thread id), `attach_id` (`claude attach <id>`), `head_before` / `head_after`
+thread id), `attach_id` (legacy plain Claude attach ID, or `hc:` followed by a
+JSON locator containing `address` and optional `session`, `socket`, `runtime`,
+`stateHome`; rendered as an hc attach command), `head_before` / `head_after`
 (git HEAD), `input_tokens`, `output_tokens`, `cost_usd`, `last_assistant`,
 `error`, and (0002) `validate_ok` (0/1, NULL = not run) and `plan_open` (open
 plan items after the iteration, NULL = no plan).

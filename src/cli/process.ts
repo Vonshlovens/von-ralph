@@ -31,6 +31,7 @@ import {
 import { harnesses } from "../registry.ts";
 import { Store } from "../store.ts";
 import * as T from "../templates.ts";
+import { claudeConnection } from "../underclass.ts";
 import { exitCodeFor, runArgv, safeName, spawnDetached } from "./shared.ts";
 
 const dirFlag = Flag.String("dir").pipe(
@@ -322,11 +323,14 @@ export const spec = Command.make(
           ? "Let's write the specs for this project. Read what exists first, then interview me."
           : `Let's write the specs for: ${topic}. Read what exists first, then interview me.`;
       const model = Option.getOrElse(a.model, () => project.model);
-      yield* checkBinary(harnesses[a.harness]);
+      yield* checkBinary(harnesses[a.harness], false);
+      const connection = a.harness === "claude" ? yield* claudeConnection() : undefined;
       // A normal foreground interactive session: the human owns this step.
       const args =
         a.harness === "claude"
           ? [
+              "--settings",
+              connection!.settings,
               ...(model === null ? [] : ["--model", model]),
               "--append-system-prompt",
               system,
@@ -334,10 +338,14 @@ export const spec = Command.make(
             ]
           : [...(model === null ? [] : ["-m", model]), `${system}\n\n${kickoff}`];
       const r = yield* Effect.sync(() =>
-        spawnSync(a.harness, args, { cwd: dir, stdio: "inherit" }),
+        spawnSync(a.harness, args, {
+          cwd: dir,
+          stdio: "inherit",
+          env: connection?.env ?? process.env,
+        }),
       );
       if (r.status !== 0) process.exitCode = r.status ?? 1;
-    }),
+    }).pipe(Effect.scoped),
 ).pipe(
   Command.withDescription(
     "Interactive spec session (Claude Code or Codex): interview → specs/*.md. Not a loop.",

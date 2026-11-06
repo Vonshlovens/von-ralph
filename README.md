@@ -95,22 +95,58 @@ Develop with `pnpm test` (Vite+ / vitest) and `pnpm check` (tsc + oxlint).
 | ------------------ | ---------- | -------------------------- | ------------------------------------------- | --------------------------------- |
 | `claude` (default) | `claude`   | Claude Code                | `opus` (Opus 5.5; `-m fable` for Fable 5.1) | Claude Code default               |
 | `codex`            | `codex`    | `npm i -g @openai/codex`   | codex config default                        | `-c model_reasoning_effort=xhigh` |
-| `opencode`         | `opencode` | see https://opencode.ai    | `openai/gpt-6.1-terra`                      | `--variant xhigh`                 |
-| `gh`               | `copilot`  | `npm i -g @github/copilot` | copilot default                             | `--effort high`                   |
+| `opencode`         | `opencode` | see https://opencode.ai    | `openai/gpt-6.1-terra`                      | `variant: xhigh`                  |
+| `gh`               | `copilot`  | `npm i -g @github/copilot` | copilot default                             | `--reasoning-effort high`         |
 
-- **claude** runs each iteration as a **real Claude Code background session**
-  (`claude --bg … --permission-mode bypassPermissions`), never `claude -p`.
-  The runner polls `claude agents --json`, follows the session transcript into
-  the log, and stops the session when the iteration ends; `claude attach <id>`
-  opens any iteration (the id is in the log and `show`).
-- **codex** uses `codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check`.
-  With no `-m` it uses the Codex CLI/config default model (pinned ids go
-  stale; gpt-5.5 has been retired for ChatGPT logins).
-- **opencode** uses `opencode run --format json --auto`.
-- **gh** (GitHub Copilot CLI's `copilot` binary, not `gh copilot`) runs with
-  `--allow-all-tools --allow-all-paths --allow-all-urls`. Its JSONL schema is
-  undocumented; the parser is best-effort with raw-line fallback.
-- Auth is per-harness (use each CLI's normal login flow before launching).
+All four harnesses run **interactive CLIs inside Herdr Core (`hc`) terminals**.
+Install `hc` separately from the older `herdr` multiplexer; `ralph doctor`
+checks both hc and each harness executable. Each iteration starts a fresh
+terminal/context with a unique name. The log and `ralph show` include the
+appropriate `hc attach` command; detach with Ctrl+\. After an iteration ends,
+Ralph stops its terminal but retains the finished hc record (`hc read <id>`)
+and its native session transcript. Use the CLI's resume command for another
+interactive turn. Ralph never stops the shared hc server.
+
+- **claude** uses normal `claude --session-id … --permission-mode bypassPermissions`.
+  It uses neither Claude's `--bg` nor `-p`. The normal CLI works with Underclass's
+  existing client check; Underclass needs no changes for this launch mode.
+- **codex** uses interactive `codex --no-daemon --dangerously-bypass-approvals-and-sandbox`.
+  With no `-m`, it uses the Codex CLI/config default model.
+- **opencode** uses interactive `opencode --auto --prompt …`. A temporary,
+  process-local plugin forwards session events and applies the requested effort
+  variant. Global and project configuration files are not edited.
+- **gh** uses interactive `copilot -i …` with
+  `--allow-all-tools --allow-all-paths --allow-all-urls --no-ask-user`.
+
+Ralph follows native transcripts/events, plus hc process/status events. Startup
+idle, silence, and intermediate tool turns do not count as completion. Codex
+and OpenCode prompts include a unique iteration marker to associate events with
+the correct root session when concurrent Ralphs share a working directory.
+Timeout, interruption, error, or completion stops only that iteration's terminal.
+If hc cannot confirm cleanup, Ralph aborts the run, reports the terminal, and
+retains any private files it still needs. Finished terminal records can be removed with `hc rm <id>`.
+A hard kill of the Ralph runner cannot run its finalizers; inspect its terminals
+with `hc ls` and stop any surviving work explicitly.
+
+Claude sessions (including the human-led `ralph spec` interview) use **Underclass
+by default**. Ralph reads `~/.config/underclass/config.toml` for the bind address
+and proxy key, falling back to the minted key in
+`~/.local/share/underclass/pool.db` (read-only). The default endpoint is
+`http://127.0.0.1:8080`. Overrides:
+
+- `UNDERCLASS_URL` (a trailing `/v1` is removed), `UNDERCLASS_BIND`, and
+  `UNDERCLASS_PROXY_KEY` override endpoint/bind/key respectively.
+- `UNDERCLASS_CONFIG_DIR` and `UNDERCLASS_DATA_DIR` select other local directories.
+
+Ralph puts `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_OAUTH_TOKEN` in a private temporary
+settings file and the child environment. It clears competing API credentials and
+cloud-provider flags, and removes settings after the session stops. Credentials
+are never command arguments. Missing credentials fail the launch. Existing Claude
+settings are not edited. Other harnesses retain their own configured providers
+and login flows; hc does not change authentication.
+
+Verified with hc 0.1.18, Claude Code 2.1.319, and OpenCode 1.17.15. Native transcript
+formats are internal and can change; unknown records are kept raw and ignored.
 
 ## Claude Code skill
 

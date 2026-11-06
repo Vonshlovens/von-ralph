@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { attachCommand } from "./hc.ts";
 /**
  * ralph: the Effect-based Ralph runner. Runs directly with Node's type
  * stripping: `node src/bin.ts …` (or the `bin/ralph` shim).
@@ -41,9 +42,7 @@ const run = Command.make(
     ),
     harness: Flag.Literals("harness", harnessIds).pipe(
       Flag.withAlias("H"),
-      Flag.withDescription(
-        "Agent harness: claude (Claude Code background session), codex, opencode, gh",
-      ),
+      Flag.withDescription("Agent harness in an hc terminal: claude, codex, opencode, gh"),
       Flag.withDefault("claude" as HarnessId),
     ),
     model: Flag.String("model").pipe(
@@ -219,7 +218,7 @@ const show = Command.make(
             ? ` · HEAD ${i.headBefore.slice(0, 7)}→${i.headAfter.slice(0, 7)}`
             : "";
         const cost = i.costUsd === null ? "" : ` · $${i.costUsd.toFixed(3)}`;
-        const attach = i.attachId === null ? "" : ` · claude attach ${i.attachId}`;
+        const attach = i.attachId === null ? "" : ` · ${attachCommand(i.attachId)}`;
         const val = i.validateOk === null ? "" : i.validateOk ? " · ✅ valid" : " · ❌ invalid";
         const planOpen = i.planOpen === null ? "" : ` · plan ${i.planOpen} open`;
         const err = i.error === null ? "" : `\n      ⚠️  ${i.error.slice(0, 200)}`;
@@ -407,12 +406,13 @@ const doctor = Command.make("doctor", {}, () =>
     const store = yield* Store;
     for (const id of harnessIds) {
       const h = harnesses[id];
-      const ok = yield* checkBinary(h).pipe(
-        Effect.as(true),
-        Effect.catchTag("HarnessUnavailable", () => Effect.succeed(false)),
+      const missing = yield* checkBinary(h).pipe(
+        Effect.as(""),
+        Effect.catchTag("HarnessUnavailable", (error) => Effect.succeed(error.message)),
       );
+      const ok = missing === "";
       yield* Console.log(
-        `${ok ? "✅" : "❌"} ${id.padEnd(9)} ${h.binary.padEnd(9)} default model ${h.defaultModel ?? "(cli default)"}${ok ? "" : `  — ${h.installHint}`}`,
+        `${ok ? "✅" : "❌"} ${id.padEnd(9)} ${h.binary.padEnd(9)} default model ${h.defaultModel ?? "(cli default)"}${ok ? "" : `  — ${missing}`}`,
       );
     }
     yield* Console.log(`state: ${store.dbPath}`);
