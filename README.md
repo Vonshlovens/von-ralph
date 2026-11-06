@@ -23,6 +23,7 @@ cd ~/von/ralph && pnpm install
 pnpm web:build                   # optional: the web UI that `ralph serve` hosts
 ln -sf ~/von/ralph/bin/ralph ~/.local/bin/ralph
 ln -sf ~/von/ralph/rmux ~/.local/bin/rmux
+ln -sfn ~/von/ralph/skills/ralph ~/.claude/skills/ralph   # the /ralph Claude Code skill
 ralph doctor                     # which harness CLIs are installed and logged in
 ```
 
@@ -183,8 +184,11 @@ formats are internal and can change; unknown records are kept raw and ignored.
 
 ## Claude Code skill
 
-The `/ralph` skill lets an interactive Claude Code session run the process and
-supervise ralphs (status, spawn, watch, report, steer, sign, stop, restart).
+The `/ralph` skill ([skills/ralph/SKILL.md](skills/ralph/SKILL.md)) lets an
+interactive Claude Code session run the process and supervise ralphs (status,
+spawn, watch, report, steer, sign, stop, restart, schedules). Install it by
+symlinking the folder into `~/.claude/skills/` (see Install), so edits here are
+what every session loads.
 
 ## Legacy bash scripts
 
