@@ -5,7 +5,9 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type HarnessId, type RunMode, StateError, type StopReason } from "../domain.ts";
+import { type HarnessId, type Instance, type RunMode, StateError } from "../domain.ts";
+export { exitCodeFor } from "../exitCodes.ts";
+import { isCallbackUrl } from "../callback.ts";
 import { Store } from "../store.ts";
 
 /** The CLI entry point (re-executed for --detach). */
@@ -25,8 +27,11 @@ export const safeName = (s: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 100) || "ralph";
 
-/** Re-exec this CLI detached from the terminal; early errors go to `<root>/launch/<name>.out`. */
-export const spawnDetached = (argv: ReadonlyArray<string>, name: string, cwd: string) =>
+/**
+ * Re-exec this CLI detached from the terminal and wait for it to register its
+ * run; early errors go to `<root>/launch/<name>.out`.
+ */
+export const launchDetached = (argv: ReadonlyArray<string>, name: string, cwd: string) =>
   Effect.gen(function* () {
     const store = yield* Store;
     const launchDir = path.join(store.root, "launch");
@@ -38,17 +43,25 @@ export const spawnDetached = (argv: ReadonlyArray<string>, name: string, cwd: st
       cwd,
       detached: true,
       stdio: ["ignore", out, out],
+      env: { ...process.env, RALPH_HOME: store.root },
     });
     child.unref();
     fs.closeSync(out);
-    // Wait for the child to register its run (or die trying).
+    let exited = false;
+    child.once("exit", () => {
+      exited = true;
+    });
     const started = yield* store.get(name).pipe(
       Effect.flatMap((r) =>
         r.startedAt >= since
           ? Effect.succeed(r)
           : Effect.fail(new StateError({ path: name, reason: "not started" })),
       ),
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
+      Effect.retry({
+        schedule: Schedule.spaced("250 millis"),
+        times: 40,
+        while: () => !exited,
+      }),
       Effect.option,
     );
     if (Option.isNone(started)) {
@@ -58,10 +71,27 @@ export const spawnDetached = (argv: ReadonlyArray<string>, name: string, cwd: st
         reason: `did not start${err === "" ? "" : `:\n${err}`}`,
       });
     }
-    const r = started.value;
+    return started.value;
+  });
+
+/** `launchDetached`, then tell the operator where to look. */
+export const spawnDetached = (argv: ReadonlyArray<string>, name: string, cwd: string) =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const r: Instance = yield* launchDetached(argv, name, cwd);
     yield* Console.log(
       `🚀 ${r.name} started (${r.mode}, run ${r.id}, pid ${r.pid})\n   log ${store.logPath(r.id)}\n   watch: ralph watch ${r.name}`,
     );
+  });
+
+/** Validate an optional `--callback` URL. */
+export const callbackOf = (o: Option.Option<string>) =>
+  Option.match(o, {
+    onNone: () => Effect.succeed(null),
+    onSome: (url) =>
+      isCallbackUrl(url)
+        ? Effect.succeed(url)
+        : Effect.fail(new StateError({ path: url, reason: "--callback must be an http(s) URL" })),
   });
 
 export interface RunSpec {
@@ -77,6 +107,7 @@ export interface RunSpec {
   readonly iterationTimeoutSeconds: number;
   readonly beadId: string | null;
   readonly scope: string | null;
+  readonly callbackUrl: string | null;
 }
 
 /** CLI args that reproduce a run's configuration (used by --detach and restart). */
@@ -97,26 +128,7 @@ export const runArgv = (r: RunSpec): Array<string> => [
   ...(r.marathon ? ["--marathon"] : []),
   ...(r.beadId === null ? [] : ["--bead", r.beadId]),
   ...(r.mode !== "run" && r.scope !== null ? ["--scope", r.scope] : []),
+  ...(r.callbackUrl === null ? [] : ["--callback", r.callbackUrl]),
   "--quiet",
   ...(r.mode === "run" ? [r.prompt] : []),
 ];
-
-/** Process exit code for a finished run: 0 when it ended as intended. */
-export const exitCodeFor = (reason: StopReason): number => {
-  switch (reason) {
-    case "interrupted":
-      return 130;
-    case "max_iterations":
-    case "operator_stop":
-    case "complete":
-    case "plan_complete":
-    case "plan_converged":
-      return 0;
-    // Ended on its own, but a human should look: distinguishable for schedulers.
-    case "plan_exhausted":
-    case "no_progress":
-      return 3;
-    default:
-      return 1;
-  }
-};

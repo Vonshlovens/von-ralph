@@ -5,24 +5,32 @@ import { attachCommand } from "./hc.ts";
  * stripping: `node src/bin.ts …` (or the `bin/ralph` shim).
  */
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
-import { Console, Effect, Layer, Option, Schedule } from "effect";
+import { Console, Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { build, init, plan, reverse, sign, spec } from "./cli/process.ts";
 import { report } from "./cli/report.ts";
-import { autoName, exitCodeFor, nameArg, runArgv, spawnDetached } from "./cli/shared.ts";
+import { schedule, serve } from "./cli/serve.ts";
+import {
+  autoName,
+  callbackOf,
+  exitCodeFor,
+  nameArg,
+  runArgv,
+  spawnDetached,
+} from "./cli/shared.ts";
 import { task } from "./cli/task.ts";
 import { type HarnessId, type Instance, StateError, harnessIds } from "./domain.ts";
 import { checkBinary } from "./harness.ts";
 import { listLegacy } from "./legacy.ts";
 import { defaults, runLoop } from "./loop.ts";
 import { runPolicy } from "./modes.ts";
+import { steerRun, stopRun } from "./control.ts";
 import { harnesses } from "./registry.ts";
 import * as StoreModule from "./store.ts";
+import { VERSION } from "./server.ts";
 import { NAME_RE, Store, formatLogLine, isAlive } from "./store.ts";
-
-const VERSION = "0.5.0";
 
 const run = Command.make(
   "run",
@@ -81,6 +89,12 @@ const run = Command.make(
       Flag.withDescription("Beads issue id this run works on (recorded in metadata)"),
       Flag.optional,
     ),
+    callback: Flag.String("callback").pipe(
+      Flag.withDescription(
+        "POST a JSON summary to this URL when the run ends (e.g. n8n resumeUrl)",
+      ),
+      Flag.optional,
+    ),
   },
   (a) =>
     Effect.gen(function* () {
@@ -103,6 +117,7 @@ const run = Command.make(
         marathon: a.marathon,
         iterationTimeoutSeconds: a.timeout * 60,
         beadId: Option.getOrNull(a.bead),
+        callbackUrl: yield* callbackOf(a.callback),
       };
       if (a.detach) {
         yield* checkBinary(harness);
@@ -292,10 +307,7 @@ const steer = Command.make(
     Effect.gen(function* () {
       const store = yield* Store;
       const r = yield* store.get(a.name);
-      if (r.status !== "running") {
-        return yield* new StateError({ path: a.name, reason: `run ${r.id} is ${r.status}` });
-      }
-      const id = yield* store.addSteer(r.id, "note", a.text);
+      const id = yield* steerRun(r, a.text);
       yield* Console.log(
         `🧭 queued steer #${id} for ${r.name}; it is added to the next iteration's prompt`,
       );
@@ -303,37 +315,6 @@ const steer = Command.make(
 ).pipe(
   Command.withDescription("Queue a note for the next iteration (consumed between iterations)"),
 );
-
-const stopOne = (r: Instance, graceful: boolean) =>
-  Effect.gen(function* () {
-    const store = yield* Store;
-    if (r.status !== "running") return yield* Console.log(`${r.name} is not running (${r.status})`);
-    if (!isAlive(r.pid)) {
-      yield* store.update(r.id, { status: "failed", stopReason: "crashed" });
-      return yield* Console.log(`${r.name}: process ${r.pid} was already gone (marked crashed)`);
-    }
-    if (graceful) {
-      yield* store.addSteer(r.id, "stop", "stop requested by operator");
-      return yield* Console.log(`🧭 ${r.name} will stop after the current iteration`);
-    }
-    process.kill(r.pid, "SIGTERM");
-    // The runner stops its agent session/process and records `stopped`; give it time.
-    const done = yield* store.get(r.id).pipe(
-      Effect.flatMap((cur) =>
-        cur.status === "running" && isAlive(r.pid)
-          ? Effect.fail(new StateError({ path: r.id, reason: "still running" }))
-          : Effect.succeed(cur),
-      ),
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 80 }),
-      Effect.option,
-    );
-    if (Option.isNone(done)) {
-      if (isAlive(r.pid)) process.kill(r.pid, "SIGKILL");
-      yield* store.update(r.id, { status: "failed", stopReason: "crashed" });
-      return yield* Console.log(`⚠️  ${r.name} did not stop within 20s; killed (pid ${r.pid})`);
-    }
-    yield* Console.log(`🛑 ${r.name} stopped`);
-  });
 
 const stop = Command.make(
   "stop",
@@ -353,10 +334,11 @@ const stop = Command.make(
           ? (yield* store.list()).filter((r) => r.status === "running")
           : [yield* store.get(a.name)];
       if (targets.length === 0) return yield* Console.log("Nothing running.");
-      yield* Effect.forEach(targets, (r) => stopOne(r, a.graceful), {
-        concurrency: "unbounded",
-        discard: true,
-      });
+      yield* Effect.forEach(
+        targets,
+        (r) => stopRun(r, a.graceful).pipe(Effect.flatMap((res) => Console.log(res.message))),
+        { concurrency: "unbounded", discard: true },
+      );
     }),
 ).pipe(Command.withDescription("Stop a ralph (now, or --graceful after the current iteration)"));
 
@@ -440,6 +422,8 @@ const root = Command.make("ralph").pipe(
     restart,
     clean,
     doctor,
+    serve,
+    schedule,
   ]),
 );
 

@@ -237,6 +237,7 @@ describe("runLoop", () => {
       beadId: null,
       mode: "run" as const,
       scope: null,
+      callbackUrl: null,
     };
     return Effect.gen(function* () {
       const store = yield* Store;

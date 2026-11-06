@@ -183,6 +183,8 @@ export const Instance = Schema.Struct({
   mode: RunMode,
   /** `--scope` text for plan/build/reverse */
   scope: Schema.NullOr(Schema.String),
+  /** POSTed a JSON summary when the run ends (n8n resumeUrl, ntfy, …) */
+  callbackUrl: Schema.NullOr(Schema.String),
 });
 export type Instance = typeof Instance.Type;
 

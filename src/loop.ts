@@ -20,6 +20,7 @@ import {
 } from "./domain.ts";
 import { head as gitHead } from "./git.ts";
 import { type Harness, checkBinary } from "./harness.ts";
+import { deliver, payloadFor } from "./callback.ts";
 import { Store, formatLogLine, newRunId } from "./store.ts";
 
 type Emit = (e: LoopEvent) => Effect.Effect<void, StateError>;
@@ -94,6 +95,8 @@ export interface LoopConfig {
   /** Print the human-readable log to stdout as well. */
   readonly echo: boolean;
   readonly beadId: string | null;
+  /** POST a summary here when the run ends. */
+  readonly callbackUrl?: string | null | undefined;
 }
 
 export const defaults = {
@@ -241,6 +244,7 @@ export const runLoop = (cfg: LoopConfig) =>
       beadId: cfg.beadId,
       mode: policy.id,
       scope: cfg.scope ?? null,
+      callbackUrl: cfg.callbackUrl ?? null,
     });
 
     const emit = (iteration: number, e: LoopEvent) =>
@@ -420,6 +424,11 @@ export const runLoop = (cfg: LoopConfig) =>
         const n = yield* Ref.get(iterations);
         yield* store.update(runId, { status: statusFor(reason), stopReason: reason });
         yield* emit(n, { type: "run_finished", reason, iterations: n });
+        if (cfg.callbackUrl != null) {
+          const run = yield* store.get(runId);
+          const result = yield* deliver(cfg.callbackUrl, yield* payloadFor(run, reason));
+          yield* emit(n, { type: "notice", text: result });
+        }
       }).pipe(Effect.ignore);
 
     return yield* loop.pipe(

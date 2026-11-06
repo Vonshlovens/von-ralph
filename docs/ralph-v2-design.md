@@ -343,6 +343,12 @@ One long-running local process (systemd user unit) exposing:
   Runs directly with Node's type stripping (`node src/bin.ts`), so no build
   step is needed for the CLI.
 - **Keep the Rust TUI**, re-point it at the new state dir / `ralph serve`.
+- **Web interface stack** (decided 2026-11-06): **SvelteKit 3** (Svelte 5
+  runes) with **pnpm** and **Vite+**, in `web/` as a pnpm workspace package.
+  Built with `adapter-static` as an SPA and served by `ralph serve` at `/`;
+  it only talks to the `/v1` API and SSE streams (no server-side code of its
+  own), so the server stays the single process. (An earlier SvelteKit
+  dashboard was removed in 3d3d704; this one starts over on the v2 API.)
 - **Retire the bash entry points** (done 2026-11-06, after M2): the Effect CLI
   is `ralph` (it was `ralph-next` while it grew beside v1); the bash scripts
   live in `legacy/` (`ralph-v1`, `alph`, `cody`, `ralph-marathon`,
@@ -355,6 +361,15 @@ One long-running local process (systemd user unit) exposing:
 
 Progress (2026-11-06):
 
+- **M3 in progress** — `ralph serve` (Effect `HttpRouter` on node:http):
+  `/v1/runs` start/list/show/report/events/log/steer/stop/restart/wait, SSE
+  per run (`Last-Event-ID` resume) and for the run list, `/v1/schedules`;
+  bearer token required beyond loopback. Completion callbacks
+  (`--callback`, `callbackUrl`; HMAC-signed) with the report as payload —
+  n8n recipe in [n8n.md](n8n.md). `ralph schedule add|list|run|pause|resume|rm`
+  as systemd user timers (cron → `OnCalendar`, foreground oneshot service so
+  systemd sees the exit code). Runs table gains `callback_url` (0003). Web UI
+  (SvelteKit 3) next.
 - **Renamed** — `ralph-next` → `ralph` (0.5.0); bash scripts moved to
   `legacy/`.
 - **M2 done** — the process as commands: `init` (config, prompts, AGENTS.md

@@ -13,6 +13,7 @@ with Node ≥24 type stripping — no build step (design:
 | -------------------- | ---------------------------------------------------------------------------------- |
 | `ralph`              | The runner: the spec → plan → build process, free-form loops, monitoring, steering |
 | `rmux` / `ralph-tui` | TUI for launching and monitoring ralphs (reads the same database)                  |
+| `ralph serve`        | HTTP API + SSE for n8n, scripts and the web UI (`web/`, SvelteKit)                 |
 | `legacy/`            | The retired bash scripts (`ralph-v1`, `alph`, `cody`, …), see below                |
 
 ## Install
@@ -86,6 +87,32 @@ ralph restart kanban-worker -N 5
   steers with `s`.
 
 Develop with `pnpm test` (Vite+ / vitest) and `pnpm check` (tsc + oxlint).
+
+## Service, callbacks, schedules
+
+```bash
+ralph serve                                    # HTTP API + SSE (+ web UI) on 127.0.0.1:7420
+ralph serve --host 0.0.0.0 --token "$TOKEN"    # beyond loopback a token is required
+ralph build -d ~/api --callback https://n8n.example/webhook-waiting/…   # POST a summary at the end
+ralph schedule add nightly --cron "0 2 * * *" -- build -d ~/api -N 8
+ralph schedule list                            # next/last run, last exit code
+ralph schedule run nightly                     # start it now; pause / resume / rm
+```
+
+- **`ralph serve`** exposes `/v1/runs` (list, start, show, report, events,
+  log, steer, stop, restart, `wait` long-poll), SSE streams
+  (`/v1/runs/:id/stream` with `Last-Event-ID` resume, `/v1/stream` for the
+  run list), and `/v1/schedules`. Starting a run re-execs the CLI detached, so
+  runs outlive the server. Full route list: [src/server.ts](src/server.ts).
+- **Callbacks**: `--callback <url>` (or `callbackUrl` over the API) POSTs
+  `{event, reason, exitCode, needsHuman, run, report}` when the run ends,
+  HMAC-signed with `RALPH_CALLBACK_SECRET[_FILE]`. That is n8n's
+  Wait-for-webhook pattern: [docs/n8n.md](docs/n8n.md).
+- **Schedules** are systemd user timers (`ralph-sched-<name>.timer` + a
+  oneshot service that runs ralph in the foreground, so systemd records the
+  real exit code: 0 done, 3 needs a human, 1 failed). `--cron` is converted to
+  `OnCalendar`; `--at` takes an `OnCalendar` expression directly;
+  `--persistent` catches up on runs missed while the machine was off.
 
 ## Harnesses
 

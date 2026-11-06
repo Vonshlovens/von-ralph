@@ -32,7 +32,7 @@ import { harnesses } from "../registry.ts";
 import { Store } from "../store.ts";
 import * as T from "../templates.ts";
 import { claudeConnection } from "../underclass.ts";
-import { exitCodeFor, runArgv, safeName, spawnDetached } from "./shared.ts";
+import { callbackOf, exitCodeFor, runArgv, safeName, spawnDetached } from "./shared.ts";
 
 const dirFlag = Flag.String("dir").pipe(
   Flag.withAlias("d"),
@@ -208,6 +208,12 @@ const modeCommand = (mode: LoopMode) =>
         Flag.withDefault(false),
       ),
       quiet: Flag.Boolean("quiet").pipe(Flag.withAlias("q"), Flag.withDefault(false)),
+      callback: Flag.String("callback").pipe(
+        Flag.withDescription(
+          "POST a JSON summary to this URL when the run ends (e.g. n8n resumeUrl)",
+        ),
+        Flag.optional,
+      ),
     },
     (a) =>
       Effect.gen(function* () {
@@ -253,6 +259,7 @@ const modeCommand = (mode: LoopMode) =>
             Option.getOrElse(a.timeout, () => project.limits.iterationTimeoutMinutes) * 60,
           beadId: bead,
           scope,
+          callbackUrl: yield* callbackOf(a.callback),
         };
         if (a.detach) return yield* spawnDetached(runArgv(spec), spec.name, dir);
         const { reason } = yield* runLoop({

@@ -167,6 +167,10 @@ const migrations = {
     yield* sql`ALTER TABLE iterations ADD COLUMN validate_ok INTEGER`;
     yield* sql`ALTER TABLE iterations ADD COLUMN plan_open INTEGER`;
   }),
+  "0003_callbacks": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE runs ADD COLUMN callback_url TEXT`;
+  }),
 };
 
 // ------------------------------------------------------------- row codecs
