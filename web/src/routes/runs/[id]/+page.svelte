@@ -136,6 +136,12 @@
     if (tab === "report" && report === null) void loadReport();
   });
 
+  // Scrolling up pauses following; scrolling back to the bottom resumes it.
+  function onFeedScroll() {
+    if (feed === undefined) return;
+    follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 24;
+  }
+
   // Keep the feed pinned to the bottom while following.
   $effect(() => {
     void events.length;
@@ -268,7 +274,7 @@
       <ActivityView {summaries} {iterations} running={run.status === "running" && run.alive} currentIteration={run.currentIteration} error={summaryError} />
     </div>
   {:else if tab === "live"}
-    <div class="feed panel" bind:this={feed}>
+    <div class="feed panel" bind:this={feed} onscroll={onFeedScroll}>
       {#if lines.length === 0}
         <p class="muted">No events yet.</p>
       {/if}
