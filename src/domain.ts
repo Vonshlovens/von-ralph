@@ -27,6 +27,92 @@ export interface ValidateResult {
   readonly output: string;
 }
 
+/** Status of one plan item as shown to people (Beads `deferred` / `pinned` → deferred). */
+export type PlanItemViewStatus = "open" | "in_progress" | "done" | "blocked" | "deferred";
+
+export interface PlanItemView {
+  readonly id: string;
+  readonly title: string;
+  readonly status: PlanItemViewStatus;
+  /** 0 (highest) … 4 */
+  readonly priority: number;
+  readonly depends_on: ReadonlyArray<string>;
+  readonly spec_refs: ReadonlyArray<string>;
+  readonly acceptance: string;
+  readonly notes: ReadonlyArray<string>;
+  /** Open / in progress with every dependency done (actionable now). */
+  readonly ready: boolean;
+  /** Beads only: bd's own status (closed, hooked, pinned, …). */
+  readonly rawStatus?: string | undefined;
+}
+
+export interface PlanScope {
+  readonly label: string | null;
+  readonly parent: string | null;
+  readonly bead: string | null;
+}
+
+export interface PlanCounts {
+  readonly total: number;
+  readonly open: number;
+  readonly ready: number;
+  readonly inProgress: number;
+  readonly done: number;
+  readonly blocked: number;
+}
+
+/**
+ * A full plan as read from its backend by the runner (or `GET /v1/plan`).
+ * Persisted in `plan_updated` events, so a finished run keeps its own plan.
+ */
+export interface PlanView {
+  readonly backend: PlanBackendId;
+  /** The Beads filter in effect; null for markdown. */
+  readonly scope: PlanScope | null;
+  readonly goal: string | null;
+  readonly items: ReadonlyArray<PlanItemView>;
+  readonly learnings: ReadonlyArray<string>;
+  readonly counts: PlanCounts;
+  /** When the backend was read. */
+  readonly updatedAt: string;
+  /** The last read failed; items are from the last good read (if any). */
+  readonly error: string | null;
+}
+
+export type SummaryStatus = "ok" | "error" | "timeout" | "interrupted" | "unavailable";
+
+/**
+ * What the background observer (a small model in its own hc terminal) said
+ * about the run. Informational only: never used for plan status or stopping.
+ */
+export interface Summary {
+  readonly kind: "activity" | "iteration";
+  readonly iteration: number;
+  /** "" unless status is ok. */
+  readonly text: string;
+  readonly createdAt: string;
+  readonly model: string;
+  readonly status: SummaryStatus;
+  readonly error?: string | undefined;
+  /** kind = iteration only */
+  readonly outcome?: IterationOutcome | undefined;
+  readonly validateOk?: boolean | null | undefined;
+}
+
+export interface ObserverStatus {
+  readonly enabled: boolean;
+  readonly model: string | null;
+  /** null = not checked (or the check could not reach the model list) */
+  readonly available: boolean | null;
+  readonly error: string | null;
+  /**
+   * Seconds between current-activity summaries (0 = per-iteration only); null
+   * when disabled. The run's FIRST observer_status is its configured setting
+   * (restart reuses it); later ones report health.
+   */
+  readonly activityIntervalSeconds?: number | null | undefined;
+}
+
 export type ErrorKind = "auth" | "rate_limit" | "context" | "api" | "unknown";
 
 /** What a harness adapter emits while an iteration runs. */
@@ -96,6 +182,11 @@ export type LoopEvent =
       readonly files: ReadonlyArray<string>;
       readonly diffPath?: string | undefined;
     }
+  /** The full plan, whenever it changes (polled during iterations); `final` just before run_finished. */
+  | { readonly type: "plan_updated"; readonly plan: PlanView; readonly final?: boolean | undefined }
+  | { readonly type: "activity_summary"; readonly summary: Summary }
+  | { readonly type: "iteration_summary"; readonly summary: Summary }
+  | ({ readonly type: "observer_status" } & ObserverStatus)
   | { readonly type: "notice"; readonly text: string }
   | {
       readonly type: "steer_received";

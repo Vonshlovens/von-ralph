@@ -23,9 +23,8 @@ import {
   type BeadsFilter,
   type PlanSnapshot,
   beadsFilter,
-  beadsSnapshot,
   filterFlags,
-  markdownSnapshot,
+  planReader,
   renderFromSidecar,
 } from "./plan.ts";
 import { shell } from "./proc.ts";
@@ -84,7 +83,11 @@ regenerates the markdown):
     $R task note <id> "<text>"
     $R task learn "<text>"            a project learning, listed at the end of the plan
 
-Priority 0 is the highest. Ids are T1, T2, …`;
+Priority 0 is the highest. Ids are T1, T2, …
+
+Mark transitions as they happen, not at the end: \`$R task start <id>\` before you begin an
+item, \`$R task done <id> --note "…"\` as soon as it is finished (or \`$R task block\`). The
+supervisor watches the plan live.`;
   }
   const flags = filterFlags(filter).join(" ");
   const f = flags === "" ? "" : ` ${flags}`;
@@ -111,7 +114,9 @@ markdown TODO lists.
     bd dep add <id> <depends-on-id>
     bd update <id> -p <0-4>  |  bd update <id> --status blocked
 
-Priority 0 is the highest.${scopeNote}`;
+Priority 0 is the highest. Mark transitions as they happen, not at the end: \`bd update <id> --claim\`
+before you begin an item, \`bd close <id> --reason "…"\` as soon as it is finished. The
+supervisor watches the plan live.${scopeNote}`;
 };
 
 export interface ModeOptions {
@@ -238,15 +243,17 @@ export const modePolicy = (o: ModeOptions): ModePolicy => {
   const dir = p.dir;
   const backend = resolveBackend(p);
   const filter = beadsFilter(p, o.bead);
+  // One reader per run: the loop polls it during iterations and publishes its
+  // views; reviews read through the same permit, so bd calls never overlap.
+  const reader =
+    o.mode === "reverse" ? undefined : planReader({ dir, backend, filter, goal: p.goal });
   const snapshot =
-    o.mode === "reverse"
+    reader === undefined
       ? specsSnapshot(dir)
-      : backend === "beads"
-        ? beadsSnapshot(dir, filter)
-        : renderFromSidecar(dir, p.plan.file).pipe(
-            Effect.ignore,
-            Effect.andThen(markdownSnapshot(dir)),
-          );
+      : (backend === "markdown"
+          ? renderFromSidecar(dir, p.plan.file).pipe(Effect.ignore, Effect.andThen(reader.read))
+          : reader.read
+        ).pipe(Effect.map((st) => st.snapshot));
   const label: PlanBackendId | "specs" = o.mode === "reverse" ? "specs" : backend;
   let lastDigest: string | null = null;
   let before: { head: string | null; dirty: ReadonlyMap<string, string> } = {
@@ -361,7 +368,7 @@ export const modePolicy = (o: ModeOptions): ModePolicy => {
       return done(null);
     });
 
-  return { id: o.mode, preflight, begin, prompt, review };
+  return { id: o.mode, preflight, begin, prompt, review, plan: reader };
 };
 
 /** The plain `run` mode: a fixed prompt; stops early only on the COMPLETE sentinel. */

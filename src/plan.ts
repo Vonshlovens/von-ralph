@@ -10,12 +10,19 @@
  * Either way the runner takes a `PlanSnapshot` before and after iterations to
  * decide whether the plan is complete, stuck, or unchanged.
  */
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Semaphore } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type PlanBackendId, StateError } from "./domain.ts";
+import {
+  type PlanBackendId,
+  type PlanCounts,
+  type PlanItemView,
+  type PlanItemViewStatus,
+  type PlanView,
+  StateError,
+} from "./domain.ts";
 import { capture } from "./proc.ts";
 import { type ProjectConfig, planJsonPath } from "./project.ts";
 
@@ -267,32 +274,115 @@ export interface PlanSnapshot {
 const digestOf = (parts: ReadonlyArray<string>) =>
   createHash("sha1").update(parts.join("\n")).digest("hex");
 
-export const markdownSnapshot = (dir: string): Effect.Effect<PlanSnapshot> =>
-  readPlan(dir).pipe(
-    Effect.map((plan): PlanSnapshot => ({
-      backend: "markdown",
-      total: plan.items.length,
-      open: plan.items.filter(isOpen).length,
-      actionable: readyItems(plan).length,
-      digest: digestOf(
-        plan.items.map(
-          (i) =>
-            `${i.id}|${i.status}|${i.priority}|${i.title}|${i.depends_on.join(",")}|${i.acceptance}`,
-        ),
-      ),
-      error: null,
-    })),
-    Effect.catch((e: StateError) =>
-      Effect.succeed({
-        backend: "markdown" as const,
-        total: 0,
-        open: 0,
-        actionable: 0,
-        digest: "error",
-        error: e.reason,
-      }),
-    ),
+/** A plan read once: the full view (for people) and its snapshot (for stop decisions). */
+export interface PlanState {
+  readonly view: PlanView;
+  readonly snapshot: PlanSnapshot;
+}
+
+const now = () => new Date().toISOString();
+
+export const countsOf = (items: ReadonlyArray<PlanItemView>): PlanCounts => ({
+  total: items.length,
+  open: items.filter((i) => i.status !== "done" && i.status !== "deferred").length,
+  ready: items.filter((i) => i.ready).length,
+  inProgress: items.filter((i) => i.status === "in_progress").length,
+  done: items.filter((i) => i.status === "done").length,
+  blocked: items.filter((i) => i.status === "blocked").length,
+});
+
+const sortViews = (items: ReadonlyArray<PlanItemView>): ReadonlyArray<PlanItemView> =>
+  [...items].sort(
+    (a, b) => a.priority - b.priority || idNum(a.id) - idNum(b.id) || a.id.localeCompare(b.id),
   );
+
+const errorState = (
+  backend: PlanBackendId,
+  scope: PlanView["scope"],
+  goal: string | null,
+  error: string,
+): PlanState => ({
+  view: {
+    backend,
+    scope,
+    goal,
+    items: [],
+    learnings: [],
+    counts: countsOf([]),
+    updatedAt: now(),
+    error,
+  },
+  snapshot: { backend, total: 0, open: 0, actionable: 0, digest: "error", error },
+});
+
+/** `.ralph/plan.json` as a view + snapshot. Never fails (a read error is in both). */
+export const markdownState = (dir: string, goal: string | null = null): Effect.Effect<PlanState> =>
+  readPlan(dir).pipe(
+    Effect.map((plan): PlanState => {
+      const ready = new Set(readyItems(plan).map((i) => i.id));
+      const items = sortViews(
+        plan.items.map((i) => ({
+          id: i.id,
+          title: i.title,
+          status: i.status,
+          priority: i.priority,
+          depends_on: i.depends_on,
+          spec_refs: i.spec_refs,
+          acceptance: i.acceptance,
+          notes: i.notes,
+          ready: ready.has(i.id),
+        })),
+      );
+      return {
+        view: {
+          backend: "markdown",
+          scope: null,
+          goal: plan.goal ?? goal,
+          items,
+          learnings: plan.learnings,
+          counts: countsOf(items),
+          updatedAt: now(),
+          error: null,
+        },
+        snapshot: {
+          backend: "markdown",
+          total: plan.items.length,
+          open: plan.items.filter(isOpen).length,
+          actionable: ready.size,
+          digest: digestOf(
+            plan.items.map(
+              (i) =>
+                `${i.id}|${i.status}|${i.priority}|${i.title}|${i.depends_on.join(",")}|${i.acceptance}`,
+            ),
+          ),
+          error: null,
+        },
+      };
+    }),
+    Effect.catch((e: StateError) => Effect.succeed(errorState("markdown", null, goal, e.reason))),
+  );
+
+export const markdownSnapshot = (dir: string): Effect.Effect<PlanSnapshot> =>
+  markdownState(dir).pipe(Effect.map((s) => s.snapshot));
+
+/** Identity of a view's content (ignores when it was read), for change detection. */
+export const viewDigest = (v: PlanView): string =>
+  digestOf([
+    JSON.stringify({
+      backend: v.backend,
+      scope: v.scope,
+      goal: v.goal,
+      items: v.items,
+      learnings: v.learnings,
+      error: v.error,
+    }),
+  ]);
+
+/** A failed read keeps the last good items, so a transient error does not blank the plan. */
+export const keepLastGood = (prev: PlanView | null, next: PlanView): PlanView =>
+  next.error === null || prev === null || prev.items.length === 0
+    ? next
+    : { ...prev, updatedAt: next.updatedAt, error: next.error };
 
 // --------------------------------------------------------------------- beads
 
@@ -322,13 +412,17 @@ interface BeadRow {
   readonly issue_type?: string;
   readonly updated_at?: string;
   readonly dependency_count?: number;
+  readonly acceptance_criteria?: string;
+  readonly notes?: string;
+  /** bd ≥1: `{issue_id, depends_on_id, type}`; `bd show`: issues with `dependency_type`; or ids. */
+  readonly dependencies?: ReadonlyArray<unknown>;
 }
 
 /** Statuses that still need work (closed / deferred / pinned do not). */
 const BEAD_OPEN = new Set(["open", "in_progress", "blocked", "hooked"]);
 
-const bdJson = (dir: string, args: ReadonlyArray<string>) =>
-  capture("bd", [...args, "--json"], { cwd: dir, timeoutMs: 60_000 }).pipe(
+const bdJson = (dir: string, args: ReadonlyArray<string>, timeoutMs = 60_000) =>
+  capture("bd", [...args, "--json"], { cwd: dir, timeoutMs }).pipe(
     Effect.flatMap((r) => {
       if (r.exitCode !== 0) {
         const msg = (r.stderr.trim() || r.stdout.trim()).split("\n").slice(-3).join(" | ");
@@ -343,52 +437,170 @@ const bdJson = (dir: string, args: ReadonlyArray<string>) =>
     }),
   );
 
+const beadStatus = (raw: string | undefined): PlanItemViewStatus => {
+  switch (raw ?? "open") {
+    case "in_progress":
+    case "hooked":
+      return "in_progress";
+    case "blocked":
+      return "blocked";
+    case "closed":
+      return "done";
+    case "deferred":
+    case "pinned":
+      return "deferred";
+    default:
+      return "open";
+  }
+};
+
+/** Ids this bead waits on ("blocks" dependencies; parent-child / related links are not waits). */
+const beadDeps = (r: BeadRow): ReadonlyArray<string> => {
+  const out: Array<string> = [];
+  for (const d of r.dependencies ?? []) {
+    if (typeof d === "string") out.push(d);
+    else if (d !== null && typeof d === "object") {
+      const o = d as Record<string, unknown>;
+      const type = o.type ?? o.dependency_type;
+      if (type !== undefined && type !== "blocks") continue;
+      const id = typeof o.depends_on_id === "string" ? o.depends_on_id : o.id;
+      if (typeof id === "string" && id !== r.id) out.push(id);
+    }
+  }
+  return [...new Set(out)];
+};
+
+/** Beads (with the configured label / parent / single-bead scope) as a view + snapshot. */
+export const beadsState = (
+  dir: string,
+  f: BeadsFilter,
+  options: { readonly goal?: string | null; readonly timeoutMs?: number } = {},
+): Effect.Effect<PlanState, never, ChildProcessSpawner.ChildProcessSpawner> => {
+  const goal = options.goal ?? null;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  return Effect.gen(function* () {
+    const rows =
+      f.bead !== null
+        ? yield* bdJson(dir, ["show", f.bead], timeoutMs)
+        : (yield* bdJson(
+            dir,
+            ["list", "--all", "--flat", "-n", "0", ...filterFlags(f)],
+            timeoutMs,
+          )).filter((r) => r.issue_type !== "epic");
+    const open = rows.filter((r) => BEAD_OPEN.has(r.status ?? "open"));
+    let actionable: number;
+    let readyIds: ReadonlySet<string>;
+    if (f.bead !== null) {
+      const ready = open.filter((r) => r.status !== "blocked");
+      actionable = ready.length;
+      readyIds = new Set(ready.map((r) => r.id));
+    } else {
+      const ready = (yield* bdJson(dir, ["ready", "-n", "0", ...filterFlags(f)], timeoutMs)).filter(
+        (r) => r.issue_type !== "epic",
+      );
+      const inProgress = open.filter((r) => r.status === "in_progress");
+      actionable = ready.length + inProgress.length;
+      readyIds = new Set([...ready, ...inProgress].map((r) => r.id));
+    }
+    const items = sortViews(
+      rows.map((r) => {
+        const status = beadStatus(r.status);
+        return {
+          id: r.id,
+          title: r.title ?? r.id,
+          status,
+          priority: typeof r.priority === "number" ? r.priority : 2,
+          depends_on: beadDeps(r),
+          spec_refs: [],
+          acceptance: r.acceptance_criteria ?? "",
+          notes: typeof r.notes === "string" && r.notes.trim() !== "" ? [r.notes.trim()] : [],
+          ready: readyIds.has(r.id) && status !== "done" && status !== "deferred",
+          rawStatus: r.status ?? "open",
+        };
+      }),
+    );
+    const scope = { label: f.label, parent: f.parent, bead: f.bead };
+    return {
+      view: {
+        backend: "beads" as const,
+        scope,
+        goal,
+        items,
+        learnings: [],
+        counts: countsOf(items),
+        updatedAt: now(),
+        error: null,
+      },
+      snapshot: {
+        backend: "beads" as const,
+        total: rows.length,
+        open: open.length,
+        actionable,
+        digest: digestOf(
+          rows
+            .map(
+              (r) =>
+                `${r.id}|${r.status}|${r.priority}|${r.title}|${r.dependency_count ?? 0}|${r.updated_at}`,
+            )
+            .sort(),
+        ),
+        error: null,
+      },
+    };
+  }).pipe(
+    Effect.catch((error: string) =>
+      Effect.succeed(
+        errorState("beads", { label: f.label, parent: f.parent, bead: f.bead }, goal, error),
+      ),
+    ),
+  );
+};
+
 export const beadsSnapshot = (
   dir: string,
   f: BeadsFilter,
 ): Effect.Effect<PlanSnapshot, never, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const rows =
-      f.bead !== null
-        ? yield* bdJson(dir, ["show", f.bead])
-        : (yield* bdJson(dir, ["list", "--all", "--flat", "-n", "0", ...filterFlags(f)])).filter(
-            (r) => r.issue_type !== "epic",
-          );
-    const open = rows.filter((r) => BEAD_OPEN.has(r.status ?? "open"));
-    let actionable: number;
-    if (f.bead !== null) {
-      actionable = open.filter((r) => r.status !== "blocked").length;
-    } else {
-      const ready = (yield* bdJson(dir, ["ready", "-n", "0", ...filterFlags(f)])).filter(
-        (r) => r.issue_type !== "epic",
-      );
-      const inProgress = open.filter((r) => r.status === "in_progress").length;
-      actionable = ready.length + inProgress;
-    }
-    return {
-      backend: "beads" as const,
-      total: rows.length,
-      open: open.length,
-      actionable,
-      digest: digestOf(
-        rows
-          .map(
-            (r) =>
-              `${r.id}|${r.status}|${r.priority}|${r.title}|${r.dependency_count ?? 0}|${r.updated_at}`,
-          )
-          .sort(),
+  beadsState(dir, f).pipe(Effect.map((s) => s.snapshot));
+
+// ------------------------------------------------------------- shared reader
+
+/**
+ * One plan source for a run: every read (the runner's poll, its post-iteration
+ * review) goes through one permit, so `bd` calls never overlap.
+ */
+export interface PlanReader {
+  readonly backend: PlanBackendId;
+  readonly read: Effect.Effect<PlanState, never, ChildProcessSpawner.ChildProcessSpawner>;
+  /** The result of the most recent read (by anyone), without reading again. */
+  readonly latest: () => PlanState | null;
+}
+
+export const planReader = (o: {
+  readonly dir: string;
+  readonly backend: PlanBackendId;
+  readonly filter: BeadsFilter;
+  readonly goal: string | null;
+  /** bd timeout per call (default 30s). */
+  readonly timeoutMs?: number;
+}): PlanReader => {
+  const lock = Semaphore.makeUnsafe(1);
+  // Read-only: polling never rewrites files in the agent's working tree.
+  const raw =
+    o.backend === "beads"
+      ? beadsState(o.dir, o.filter, { goal: o.goal, timeoutMs: o.timeoutMs ?? 30_000 })
+      : markdownState(o.dir, o.goal);
+  let last: PlanState | null = null;
+  return {
+    backend: o.backend,
+    read: lock.withPermits(1)(
+      raw.pipe(
+        Effect.tap((st) =>
+          Effect.sync(() => {
+            last = st;
+          }),
+        ),
       ),
-      error: null,
-    };
-  }).pipe(
-    Effect.catch((error: string) =>
-      Effect.succeed({
-        backend: "beads" as const,
-        total: 0,
-        open: 0,
-        actionable: 0,
-        digest: "error",
-        error,
-      }),
     ),
-  );
+    latest: () => last,
+  };
+};

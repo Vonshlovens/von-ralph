@@ -17,6 +17,16 @@ export interface IterationInput {
   readonly dir: string;
   /** Display name for this iteration's session (e.g. `<instance>-3`). */
   readonly sessionName: string;
+  /**
+   * "none" = a session with no tools at all (Claude only: no built-in tools, no
+   * MCP servers, no skills, nothing auto-approved). Used by the observer.
+   */
+  readonly tools?: "none" | undefined;
+  /**
+   * Claude only: run with this CLAUDE_CONFIG_DIR (an isolated config, e.g. the
+   * observer's, which pre-trusts only its scratch folder). Default: inherited.
+   */
+  readonly claudeConfigDir?: string | undefined;
   /** Called with every raw line the harness produced (persisted by the loop). */
   readonly onRaw: (line: string) => Effect.Effect<void>;
 }

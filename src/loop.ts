@@ -2,7 +2,7 @@
  * The Ralph loop: run the same prompt in a fresh agent context per iteration,
  * record everything, and stop on a clear, recorded reason.
  */
-import { Console, Duration, Effect, Option, Ref, Stream } from "effect";
+import { Cause, Console, Duration, Effect, Option, Ref, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import * as nodePath from "node:path";
 import {
@@ -19,7 +19,17 @@ import {
   clip,
 } from "./domain.ts";
 import { head as gitHead } from "./git.ts";
-import { type Harness, checkBinary } from "./harness.ts";
+import { type Harness, checkBinary, claude, codex, copilot, opencode } from "./harness.ts";
+import {
+  type Observer,
+  type ObserverConfig,
+  noObserver,
+  observerEnvDisabled,
+  realObserver,
+  startObserver,
+} from "./observer.ts";
+import { type PlanReader, keepLastGood, viewDigest } from "./plan.ts";
+import type { PlanView } from "./domain.ts";
 import { deliver, payloadFor } from "./callback.ts";
 import { Store, formatLogLine, newRunId } from "./store.ts";
 
@@ -61,6 +71,12 @@ export interface ModePolicy {
   readonly review: (
     input: ReviewInput,
   ) => Effect.Effect<Review, StateError, ChildProcessSpawner.ChildProcessSpawner>;
+  /**
+   * The run's plan (plan / build modes). The loop publishes it as `plan_updated`
+   * after preflight and review, polls it while an iteration runs, and persists
+   * a final snapshot before `run_finished`.
+   */
+  readonly plan?: PlanReader | undefined;
 }
 
 /** The plain `run` mode (also exported from modes.ts with the sentinel check). */
@@ -97,7 +113,23 @@ export interface LoopConfig {
   readonly beadId: string | null;
   /** POST a summary here when the run ends. */
   readonly callbackUrl?: string | null | undefined;
+  /**
+   * Background summaries. Default (undefined): Claude Haiku 5.5 for the real
+   * harnesses (unless RALPH_OBSERVER=0), off for anything else (test fakes).
+   */
+  readonly observer?: ObserverConfig | false | undefined;
+  /** How often to re-read the plan while an iteration runs; 0 = only between iterations. */
+  readonly planPollMs?: number | undefined;
 }
+
+/** The real harness adapters (test fakes are other objects). */
+const REAL_HARNESSES: ReadonlyArray<Harness> = [claude, codex, opencode, copilot];
+
+const observerFor = (cfg: LoopConfig): ObserverConfig | false => {
+  if (cfg.observer !== undefined) return cfg.observer;
+  if (observerEnvDisabled()) return false;
+  return REAL_HARNESSES.includes(cfg.harness) ? realObserver() : false;
+};
 
 export const defaults = {
   rateLimitSleepSeconds: 1800,
@@ -247,15 +279,47 @@ export const runLoop = (cfg: LoopConfig) =>
       callbackUrl: cfg.callbackUrl ?? null,
     });
 
+    let observer: Observer = noObserver;
     const emit = (iteration: number, e: LoopEvent) =>
       Effect.gen(function* () {
         const ev = { ...e, ts: now(), run: runId, instance: cfg.name, iteration } as RalphEvent;
         yield* store.appendEvent(ev);
+        observer.record(ev);
         if (cfg.echo) {
           const line = formatLogLine(ev);
           if (line !== undefined) yield* Console.log(line);
         }
       });
+
+    // ---- plan: persisted whenever it changes, so a finished run keeps its own plan
+    const planSource = policy.plan;
+    let planView: PlanView | null = null;
+    let planKey: string | null = null;
+    const publishPlan = (n: number, view: PlanView | undefined, final = false) =>
+      Effect.suspend(() => {
+        if (view === undefined) return Effect.void;
+        const merged = keepLastGood(planView, view);
+        const key = viewDigest(merged);
+        if (!final && key === planKey) return Effect.void;
+        planView = merged;
+        planKey = key;
+        observer.setPlan(merged);
+        return emit(n, { type: "plan_updated", plan: merged, ...(final ? { final: true } : {}) });
+      }).pipe(Effect.ignore);
+    const publishLatest = (n: number) => publishPlan(n, planSource?.latest()?.view);
+    const pollMs = cfg.planPollMs ?? (planSource?.backend === "beads" ? 5000 : 2000);
+    /** Re-read the plan while the agent works (start / done transitions show up live). */
+    const pollPlan = (
+      n: number,
+    ): Effect.Effect<never, never, ChildProcessSpawner.ChildProcessSpawner> =>
+      planSource === undefined || pollMs <= 0
+        ? Effect.never
+        : Effect.forever(
+            Effect.sleep(Duration.millis(pollMs)).pipe(
+              Effect.andThen(planSource.read),
+              Effect.flatMap((st) => publishPlan(n, st.view)),
+            ),
+          );
 
     const runIteration = (n: number, prompt: string) =>
       Effect.gen(function* () {
@@ -264,6 +328,7 @@ export const runLoop = (cfg: LoopConfig) =>
         const headBefore = yield* gitHead(dir);
         yield* policy.begin(n);
         yield* emit(n, { type: "iteration_started", prompt: clip(prompt, 500) });
+        observer.iterationStarted(n);
         const tally = newTally();
         const drive = cfg.harness
           .run({
@@ -293,6 +358,7 @@ export const runLoop = (cfg: LoopConfig) =>
           outcome: IterationOutcome,
           review: Review | null,
           headAfterKnown?: string | null,
+          stopping = false,
         ) =>
           Effect.gen(function* () {
             recorded = true;
@@ -318,6 +384,22 @@ export const runLoop = (cfg: LoopConfig) =>
             };
             yield* store.writeIteration(runId, rec);
             yield* emit(n, { type: "iteration_finished", outcome, durationMs });
+            // Summaries never feed back into the loop. On a stop the observer
+            // records an `interrupted` placeholder instead of calling the model.
+            observer.iterationFinished(
+              {
+                iteration: n,
+                outcome,
+                durationMs,
+                validateOk: rec.validateOk,
+                committed:
+                  rec.headBefore === null || rec.headAfter === null
+                    ? null
+                    : rec.headBefore !== rec.headAfter,
+                error: rec.error,
+              },
+              stopping,
+            );
           });
         // A timeout interrupts only the inner stream (running the harness finalizers:
         // stop the iteration's hc terminal). An outside stop interrupts
@@ -330,7 +412,7 @@ export const runLoop = (cfg: LoopConfig) =>
               )
             : drive.pipe(Effect.as(false));
         const body = Effect.gen(function* () {
-          const timedOut = yield* bounded;
+          const timedOut = yield* Effect.raceFirst(bounded, pollPlan(n));
           if (timedOut) {
             tally.lastError = `iteration timed out after ${cfg.iterationTimeoutSeconds}s`;
             yield* emit(n, { type: "error", kind: "unknown", message: tally.lastError });
@@ -349,12 +431,15 @@ export const runLoop = (cfg: LoopConfig) =>
                   emit: (e) => emit(n, e),
                 })
               : null;
+          yield* publishLatest(n);
           yield* record(outcome, review, headAfter);
           return { outcome, review };
         });
         return yield* body.pipe(
           Effect.onInterrupt(() =>
-            recorded ? Effect.void : record("interrupted", null).pipe(Effect.ignore),
+            recorded
+              ? Effect.void
+              : record("interrupted", null, undefined, true).pipe(Effect.ignore),
           ),
         );
       });
@@ -370,7 +455,35 @@ export const runLoop = (cfg: LoopConfig) =>
         dir,
         maxIterations: cfg.maxIterations,
       });
+      const observing = observerFor(cfg);
+      // Always record the setting (also "off"), so the UI and restart know it.
+      if (observing === false)
+        yield* emit(0, {
+          type: "observer_status",
+          enabled: false,
+          model: null,
+          available: null,
+          error: null,
+          activityIntervalSeconds: null,
+        }).pipe(Effect.ignore);
+      else
+        // The observer must never fail the run: a broken start just means no summaries.
+        observer = yield* startObserver(observing, { name: cfg.name, mode: policy.id }, emit).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause as Cause.Cause<never>)
+              : emit(0, {
+                  type: "observer_status",
+                  enabled: true,
+                  model: observing.model,
+                  available: false,
+                  error: `observer failed to start: ${clip(Cause.pretty(cause), 300)}`,
+                  activityIntervalSeconds: Math.round(observing.activityIntervalMs / 1000),
+                }).pipe(Effect.ignore, Effect.as(noObserver)),
+          ),
+        );
       const early = yield* policy.preflight((e) => emit(0, e));
+      yield* publishLatest(0);
       if (early !== null) return early;
       let consecutiveFailures = 0;
       let feedback: ReadonlyArray<string> = [];
@@ -419,9 +532,22 @@ export const runLoop = (cfg: LoopConfig) =>
       }
     });
 
-    const finish = (reason: StopReason) =>
+    const finish = (reason: StopReason, how: "drain" | "interrupt" = "drain") =>
       Effect.gen(function* () {
         const n = yield* Ref.get(iterations);
+        // The run's final plan, persisted before run_finished. A stop does not wait on bd.
+        if (planSource !== undefined) {
+          const last =
+            how === "drain"
+              ? yield* planSource.read.pipe(
+                  Effect.timeoutOption("15 seconds"),
+                  Effect.map((o) => (Option.isSome(o) ? o.value.view : (planView ?? undefined))),
+                )
+              : (planView ?? undefined);
+          yield* publishPlan(n, last, true);
+        }
+        // Every queued iteration summary is persisted before run_finished closes the stream.
+        yield* observer.close(how);
         yield* store.update(runId, { status: statusFor(reason), stopReason: reason });
         yield* emit(n, { type: "run_finished", reason, iterations: n });
         if (cfg.callbackUrl != null) {
@@ -433,9 +559,9 @@ export const runLoop = (cfg: LoopConfig) =>
 
     return yield* loop.pipe(
       Effect.tap(finish),
-      Effect.onInterrupt(() => finish("interrupted")),
+      Effect.onInterrupt(() => finish("interrupted", "interrupt")),
       Effect.tapError(() => finish("harness_failed")),
       Effect.tapDefect(() => finish("harness_failed")),
       Effect.map((reason) => ({ runId, reason })),
     );
-  });
+  }).pipe(Effect.scoped);

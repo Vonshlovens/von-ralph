@@ -110,7 +110,29 @@ ralph schedule run nightly                     # start it now; pause / resume / 
   once and `ralph serve` hosts it at `/` — live run list, per-run event feed,
   iterations, report, steer / stop / restart, start a run, schedules. It is a
   static SPA over the same `/v1` API (token prompt when the server has one).
-  `pnpm web:dev` runs Vite against a running `ralph serve`.
+  `pnpm web:dev` runs Vite against a running `ralph serve`. Visual system:
+  [web/DESIGN.md](web/DESIGN.md), with portable tokens bundled in the app.
+- **Live plans**: `/plan?dir=<URL-encoded repo path>` in the web UI (API
+  `GET /v1/plan?dir=…`) shows a project's plan right now, before any run
+  exists, so a supervising agent can register a plan (`ralph task add …` /
+  `bd create …`) and hand over a link. Each plan/build run persists its own
+  snapshots as `plan_updated` events: the runner re-reads the plan every ~5s
+  (markdown 2s) while an iteration runs, so `task start` / `bd update --claim`
+  and `task done` / `bd close` show up live, and again at the end;
+  `GET /v1/runs/:id/plan` returns the run's last snapshot (`final: true` once
+  it ended — never a fresh read of today's repo). The Beads view honors
+  `[plan].label`, `[plan].parent` and `--bead`.
+- **Observer summaries**: each run of a real harness starts a background
+  **Claude Haiku 5.5** (`claude-haiku-5-5` through Underclass) in its own
+  interactive hc terminal with no tools, no MCP servers and an isolated
+  config in a scratch folder. It summarizes current activity (only after new
+  events, at most every 60s, one summary at a time) and every finished
+  iteration (with its outcome and validation), from a bounded tail of
+  normalized events framed as untrusted. `GET /v1/runs/:id/summaries`, SSE
+  `activity_summary` / `iteration_summary` / `observer_status`, 👀 log lines.
+  Summaries are informational only (never used for completion or stopping);
+  observer failures never fail the run. `--no-observer`,
+  `--observer-interval <s>` (0 = per-iteration only), `RALPH_OBSERVER=0`.
 - **Callbacks**: `--callback <url>` (or `callbackUrl` over the API) POSTs
   `{event, reason, exitCode, needsHuman, run, report}` when the run ends,
   HMAC-signed with `RALPH_CALLBACK_SECRET[_FILE]`. That is n8n's

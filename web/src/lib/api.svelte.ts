@@ -51,6 +51,44 @@ export interface Iteration {
   planOpen: number | null;
 }
 
+export interface PlanItem {
+  id: string;
+  title: string;
+  status: "open" | "in_progress" | "done" | "blocked" | "deferred";
+  priority: number;
+  depends_on: string[];
+  spec_refs: string[];
+  acceptance: string;
+  notes: string[];
+}
+
+export interface RunPlan {
+  backend: "markdown" | "beads" | null;
+  goal?: string | null;
+  items: PlanItem[];
+  learnings: string[];
+  updatedAt: string | null;
+  error: string | null;
+  scope?: { label: string | null; parent: string | null; bead: string | null } | null;
+  live?: boolean;
+  final?: boolean;
+}
+
+export interface ActivitySummary {
+  iteration: number;
+  text: string;
+  createdAt: string;
+  model: string;
+  status?: string;
+  error?: string | null;
+}
+
+export interface RunSummaries {
+  observer?: { enabled: boolean; model: string | null; available: boolean | null; error: string | null } | null;
+  current: ActivitySummary | null;
+  iterations: ActivitySummary[];
+}
+
 /** A normalized event (see src/domain.ts RalphEvent); fields vary by type. */
 export interface RalphEvent {
   type: string;
@@ -122,6 +160,8 @@ export interface StartRequest {
   scope?: string | null;
   bead?: string | null;
   callbackUrl?: string | null;
+  observer?: boolean | null;
+  observerInterval?: number | null;
 }
 
 const TOKEN_KEY = "ralph.token";
@@ -180,6 +220,9 @@ export const api = {
   run: (id: string) =>
     call<{ run: Run; iterations: Iteration[]; logPath: string }>(`/v1/runs/${enc(id)}`),
   report: (id: string) => call<Report>(`/v1/runs/${enc(id)}/report`),
+  plan: (id: string) => call<RunPlan>(`/v1/runs/${enc(id)}/plan`),
+  projectPlan: (dir: string) => call<RunPlan>(`/v1/plan?${new URLSearchParams({ dir })}`),
+  summaries: (id: string) => call<RunSummaries>(`/v1/runs/${enc(id)}/summaries`),
   start: (req: StartRequest) => post<{ run: Run }>("/v1/runs", req),
   steer: (id: string, text: string) =>
     post<{ steerId: number }>(`/v1/runs/${enc(id)}/steer`, { text }),

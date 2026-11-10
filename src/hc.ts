@@ -39,8 +39,16 @@ export function interactiveArgs(
         input.sessionName,
         ...flag("--model", input.model),
         ...flag("--effort", input.effort),
-        "--permission-mode",
-        "bypassPermissions",
+        ...(input.tools === "none"
+          ? [
+              "--tools",
+              "",
+              "--strict-mcp-config",
+              "--disable-slash-commands",
+              "--permission-mode",
+              "dontAsk",
+            ]
+          : ["--permission-mode", "bypassPermissions"]),
         "--settings",
         settings!,
         "--",
@@ -233,10 +241,11 @@ class Terminal {
   }
   async launch(settings?: string, overrides?: NodeJS.ProcessEnv) {
     const home = os.homedir();
+    const claudeConfig =
+      this.input.claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude");
     if (this.id === "claude")
-      this.watch(
-        path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(home, ".claude"), "projects"),
-        (file) => file.endsWith(`/${this.uuid}.jsonl`),
+      this.watch(path.join(claudeConfig, "projects"), (file) =>
+        file.endsWith(`/${this.uuid}.jsonl`),
       );
     if (this.id === "gh")
       this.watch(
@@ -257,7 +266,23 @@ class Terminal {
         !["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"].includes(key)
       )
         env[key] = value;
-    if (this.id === "claude") env.CLAUDECODE = ""; // a separate hc terminal is not a nested Claude session
+    if (this.id === "claude") {
+      env.CLAUDECODE = ""; // a separate hc terminal is not a nested Claude session
+      if (this.input.claudeConfigDir !== undefined)
+        env.CLAUDE_CONFIG_DIR = this.input.claudeConfigDir;
+      // Markers inherited from a supervising Claude Code session (ralph started
+      // from inside one). CLAUDE_CODE_CHILD_SESSION turns off transcript saving,
+      // and the transcript is how ralph sees the iteration at all.
+      for (const key of [
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_ENTRYPOINT",
+      ])
+        delete env[key];
+    }
     if (this.id === "opencode") {
       fs.writeFileSync(this.eventFile, "", { mode: 0o600 });
       this.watch(this.dir, (file) => file === this.eventFile);

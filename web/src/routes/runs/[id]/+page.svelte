@@ -6,10 +6,15 @@
     type RalphEvent,
     type Report,
     type Run,
+    type RunPlan,
+    type RunSummaries,
     api,
     stream,
   } from "#lib/api.svelte.js";
   import { ago, describe, duration, stateOf, tildify, tokens } from "#lib/format.js";
+  import PlanView from "#lib/PlanView.svelte";
+  import ActivityView from "#lib/ActivityView.svelte";
+  import EventIcon from "#lib/EventIcon.svelte";
 
   const id = $derived(page.params.id ?? "");
 
@@ -18,27 +23,35 @@
   let events = $state<{ id: number; event: RalphEvent }[]>([]);
   let report = $state<Report | null>(null);
   let error = $state("");
-  let tab = $state<"live" | "iterations" | "report">("live");
+  let tab = $state<"overview" | "live" | "iterations" | "report">("overview");
+  let plan = $state<RunPlan | null>(null);
+  let summaries = $state<RunSummaries | null>(null);
+  let planError = $state("");
+  let summaryError = $state("");
   let follow = $state(true);
   let streaming = $state(false);
   let feed: HTMLElement | undefined = $state();
 
   async function refresh() {
+    const requestedId = id;
     try {
-      const r = await api.run(id);
+      const r = await api.run(requestedId);
+      if (requestedId !== id) return;
       run = r.run;
       iterations = r.iterations;
       error = "";
     } catch (e) {
-      error = (e as Error).message;
+      if (requestedId === id) error = (e as Error).message;
     }
   }
 
   async function loadReport() {
+    const requestedId = id;
     try {
-      report = await api.report(id);
+      const result = await api.report(requestedId);
+      if (requestedId === id) report = result;
     } catch (e) {
-      error = (e as Error).message;
+      if (requestedId === id) error = (e as Error).message;
     }
   }
 
@@ -47,27 +60,62 @@
     const runId = id;
     events = [];
     report = null;
+    run = null;
+    iterations = [];
+    plan = null;
+    summaries = null;
+    planError = "";
+    summaryError = "";
+    error = "";
+    tab = "overview";
+    let disposed = false;
+    let refreshingContext = false;
+    let contextQueued = false;
+    const refreshContext = async () => {
+      if (refreshingContext) { contextQueued = true; return; }
+      refreshingContext = true;
+      const [savedPlan, savedSummaries] = await Promise.allSettled([api.plan(runId), api.summaries(runId)]);
+      if (!disposed && runId === id) {
+        if (savedPlan.status === "fulfilled") { plan = savedPlan.value; planError = ""; }
+        else planError = (savedPlan.reason as Error).message;
+        if (savedSummaries.status === "fulfilled") { summaries = savedSummaries.value; summaryError = ""; }
+        else summaryError = (savedSummaries.reason as Error).message;
+      }
+      refreshingContext = false;
+      if (contextQueued && !disposed) { contextQueued = false; void refreshContext(); }
+    };
     void refresh();
+    void refreshContext();
     const es = stream(`/v1/runs/${encodeURIComponent(runId)}/stream`);
-    streaming = true;
+    streaming = false;
+    es.onopen = () => { if (!disposed) streaming = true; };
     const onEvent = (e: MessageEvent) => {
-      events.push({ id: Number(e.lastEventId), event: JSON.parse(e.data) as RalphEvent });
-      const t = (JSON.parse(e.data) as RalphEvent).type;
+      if (disposed) return;
+      const event = JSON.parse(e.data) as RalphEvent;
+      const eventId = Number(e.lastEventId);
+      if (events.some((entry) => entry.id === eventId)) return;
+      events.push({ id: eventId, event });
+      if (events.length > 2000) events.splice(0, events.length - 2000);
+      const t = event.type;
       if (t === "iteration_finished" || t === "run_finished" || t === "iteration_started") void refresh();
+      if (["plan_updated", "activity_summary", "iteration_summary", "observer_status", "run_finished"].includes(t)) void refreshContext();
     };
     const types = [
       "run_started", "iteration_started", "session", "assistant", "thinking", "tool_call",
       "tool_result", "usage", "error", "needs_input", "harness_exit", "steer_received",
       "iteration_finished", "validate", "plan_status", "scope_violation", "notice",
       "rate_limit_sleep", "run_finished", "turn_end",
+      "plan_updated", "activity_summary", "iteration_summary", "observer_status",
     ];
     for (const t of types) es.addEventListener(t, onEvent as EventListener);
     es.addEventListener("end", () => {
       streaming = false;
       es.close();
       void refresh();
+      void refreshContext();
     });
     es.onerror = () => {
+      streaming = false;
       // EventSource reconnects with Last-Event-ID; once the run is over, stop.
       if (run !== null && run.status !== "running") {
         streaming = false;
@@ -75,9 +123,10 @@
       }
     };
     const poll = setInterval(() => {
-      if (run?.status === "running") void refresh();
-    }, 10_000);
+      if (run?.status === "running") { void refresh(); void refreshContext(); }
+    }, 5_000);
     return () => {
+      disposed = true;
       es.close();
       clearInterval(poll);
     };
@@ -149,6 +198,7 @@
   const totalTokens = $derived(iterations.reduce((s, i) => s + i.inputTokens + i.outputTokens, 0));
   const cost = $derived(iterations.reduce((s, i) => s + (i.costUsd ?? 0), 0));
   const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour12: false });
+  const iterationSummaries = $derived(new Map(summaries?.iterations.map((summary) => [summary.iteration, summary]) ?? []));
 </script>
 
 <svelte:head><title>ralph · {run?.name ?? id}</title></svelte:head>
@@ -181,7 +231,7 @@
   <section class="controls panel">
     {#if run.status === "running" && run.alive}
       <form class="steer" onsubmit={steer}>
-        <input bind:value={steerText} placeholder="Steer: a note for the next iteration's prompt" />
+        <input aria-label="Note for the next iteration" bind:value={steerText} placeholder="A note for the next iteration" />
         <button type="submit" disabled={busy || steerText.trim() === ""}>Steer</button>
       </form>
       <button disabled={busy} onclick={() => stop(true)}>Stop after this iteration</button>
@@ -197,20 +247,27 @@
     {/if}
   </section>
 
-  <div class="tabs" role="tablist">
-    <button role="tab" aria-selected={tab === "live"} class:on={tab === "live"} onclick={() => (tab = "live")}>
-      Live {#if streaming}<span class="dot"></span>{/if}
+  <div class="tabs" role="group" aria-label="Run views">
+    <button aria-pressed={tab === "overview"} class:on={tab === "overview"} onclick={() => (tab = "overview")}>Overview</button>
+    <button aria-pressed={tab === "live"} class:on={tab === "live"} onclick={() => (tab = "live")}>
+      Events {#if streaming}<span class="dot" title="Connected"></span>{/if}
     </button>
-    <button role="tab" aria-selected={tab === "iterations"} class:on={tab === "iterations"} onclick={() => (tab = "iterations")}>
+    <button aria-pressed={tab === "iterations"} class:on={tab === "iterations"} onclick={() => (tab = "iterations")}>
       Iterations <span class="count">{iterations.length}</span>
     </button>
-    <button role="tab" aria-selected={tab === "report"} class:on={tab === "report"} onclick={() => (tab = "report")}>Report</button>
+    <button aria-pressed={tab === "report"} class:on={tab === "report"} onclick={() => (tab = "report")}>Report</button>
     {#if tab === "live"}
       <label class="follow"><input type="checkbox" bind:checked={follow} /> follow</label>
     {/if}
   </div>
 
-  {#if tab === "live"}
+  {#if error}<p class="error" role="status">{error}</p>{/if}
+  {#if tab === "overview"}
+    <div class="overview">
+      <PlanView {plan} running={run.status === "running" && run.alive} error={planError} projectDir={run.dir} />
+      <ActivityView {summaries} {iterations} running={run.status === "running" && run.alive} currentIteration={run.currentIteration} error={summaryError} />
+    </div>
+  {:else if tab === "live"}
     <div class="feed panel" bind:this={feed}>
       {#if lines.length === 0}
         <p class="muted">No events yet.</p>
@@ -218,7 +275,7 @@
       {#each lines as l (l.key)}
         <div class="line k-{l.kind}">
           <span class="t mono">{time(l.ts)}</span>
-          <span class="i">{l.icon}</span>
+          <span class="i"><EventIcon kind={l.kind} /></span>
           <span class="x">{l.text}</span>
         </div>
       {/each}
@@ -230,7 +287,7 @@
       <div class="table panel">
         <table>
           <thead>
-            <tr><th>#</th><th>outcome</th><th>time</th><th>tokens</th><th>commit</th><th>validate</th><th>plan open</th><th>last message</th></tr>
+            <tr><th>#</th><th>outcome</th><th>time</th><th>tokens</th><th>commit</th><th>validate</th><th>plan open</th><th>summary / last message</th></tr>
           </thead>
           <tbody>
             {#each iterations as i (i.iteration)}
@@ -240,9 +297,13 @@
                 <td class="mono">{duration(i.durationMs)}</td>
                 <td class="mono">{tokens(i.inputTokens + i.outputTokens)}</td>
                 <td class="mono">{i.headBefore && i.headAfter && i.headBefore !== i.headAfter ? i.headAfter.slice(0, 7) : "—"}</td>
-                <td>{i.validateOk === null ? "—" : i.validateOk ? "✅" : "❌"}</td>
+                <td class:error={i.validateOk === false}>{i.validateOk === null ? "—" : i.validateOk ? "Passed" : "Failed"}</td>
                 <td class="mono">{i.planOpen ?? "—"}</td>
-                <td class="last">{i.error ?? i.lastAssistant ?? ""}</td>
+                <td class="iteration-summary">
+                  {#if iterationSummaries.get(i.iteration)?.text}<p>{iterationSummaries.get(i.iteration)?.text}</p>{/if}
+                  {#if iterationSummaries.get(i.iteration)?.error}<p class="error">Summary unavailable: {iterationSummaries.get(i.iteration)?.error}</p>{/if}
+                  {#if i.error || i.lastAssistant}<details><summary>Agent’s last message</summary><p>{i.error ?? i.lastAssistant}</p></details>{/if}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -304,6 +365,20 @@
   .head {
     margin: 10px 0 16px;
   }
+  .overview { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 36px; padding-top: 12px; align-items: start; }
+  .overview > :global(:last-child) { padding-left: 30px; border-left: 1px solid var(--line); }
+  .iteration-summary { min-width: 260px; max-width: 480px; }
+  .iteration-summary p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .iteration-summary summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  @media (max-width: 800px) {
+    .overview { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+    .overview > :global(:last-child) { padding-left: 0; padding-top: 24px; border-left: 0; border-top: 1px solid var(--line); }
+    .tabs { flex-wrap: wrap; }
+    .tabs button { padding: 8px; }
+    .facts div { min-width: 0; max-width: 100%; }
+    dd { overflow-wrap: anywhere; }
+    h1 { overflow-wrap: anywhere; }
+  }
   .title {
     display: flex;
     align-items: center;
@@ -338,7 +413,7 @@
     margin: 12px 0 0;
     padding: 10px 12px;
     background: var(--panel-2);
-    border-radius: 8px;
+    border-radius: 0;
     white-space: pre-wrap;
     max-height: 160px;
     overflow: auto;
@@ -348,7 +423,12 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    padding: 10px;
+    padding: 12px 0;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
     margin-bottom: 18px;
   }
   .steer {
@@ -389,10 +469,10 @@
   }
   .count {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 12px;
     background: var(--panel-2);
     padding: 0 6px;
-    border-radius: 999px;
+    border-radius: 0;
   }
   .dot {
     width: 6px;
@@ -431,8 +511,12 @@
   }
   .line .t {
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: 12px;
   }
+  .line .i { display: flex; align-self: start; margin-top: 3px; color: var(--muted); }
+  .k-good .i { color: var(--good); }
+  .k-bad .i { color: var(--bad); }
+  .k-warn .i { color: var(--warn); }
   .line .x {
     white-space: pre-wrap;
     word-break: break-word;
@@ -450,7 +534,7 @@
   .k-marker .x {
     color: var(--accent);
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: 13px;
   }
   .k-good .x {
     color: var(--good);
@@ -529,15 +613,19 @@
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-    gap: 10px;
+    gap: 0;
+    border-top: var(--rule-w) solid var(--rule);
+    border-bottom: 1px solid var(--line);
   }
   .card {
-    padding: 12px 14px;
+    padding: 16px 14px;
+    border: 0;
+    background: transparent;
     display: grid;
     gap: 2px;
   }
   .card strong {
-    font-size: 22px;
+    font-size: 24px;
     font-family: var(--mono);
   }
   .card span {
@@ -549,7 +637,7 @@
   .block pre {
     background: var(--panel-2);
     padding: 10px;
-    border-radius: 6px;
+    border-radius: 0;
     overflow: auto;
     max-height: 360px;
   }

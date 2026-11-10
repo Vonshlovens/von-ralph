@@ -1,0 +1,194 @@
+/*
+ * von · design tokens  (v0.1.0)
+ * ---------------------------------------------------------------------------
+ * The single entrypoint for colour, type, space, rules, focus and motion.
+ * Zero dependencies. Copy this file as a snapshot; nothing here imports.
+ *
+ * Theme contract (same shape as Overalls and Ralph):
+ *   :root                                   light (default)
+ *   :root[data-theme="dark"]                dark, explicit
+ *   @media (prefers-color-scheme: dark)
+ *     :root:not([data-theme="light"])       dark, automatic
+ *   No data-theme attribute = "auto" (follow the OS).
+ *
+ * Every colour the UI renders comes from this file. Components reference the
+ * semantic roles (--paper, --ink, --ok …), never raw hex.
+ * See DESIGN.md for the rules that go with the values.
+ */
+
+:root {
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-prose: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-ui: var(--font-mono);
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-bold: 700;
+  --fw-heavy: 800;
+
+  /* Scale (rem against a 16px root). Ratio ≈ 1.2, rounded to whole pixels. */
+  --fs-xs: 0.75rem;     /* 12px  column heads, micro labels (uppercase, tracked) */
+  --fs-sm: 0.8125rem;   /* 13px  dense table cells, meta, timestamps */
+  --fs-base: 0.9375rem; /* 15px  UI body, controls, form fields */
+  --fs-md: 1.0625rem;   /* 17px  prose body (reports, descriptions) */
+  --fs-lg: 1.25rem;     /* 20px  section title */
+  --fs-xl: 1.625rem;    /* 26px  page title */
+  --fs-2xl: 2.25rem;    /* 36px  display: specimen / empty-state headline only */
+
+  /* The line unit. Vertical rhythm is counted in --lh, horizontal in ch. */
+  --lh: 1.5rem;         /* 24px  base line */
+  --lh-tight: 1.25rem;  /* 20px  dense rows, labels */
+  --lh-prose: 1.65;     /* unitless, for --font-prose paragraphs */
+  --tracking-caps: 0.06em;
+  --tracking-title: -0.01em;
+
+  --measure: 72ch;      /* prose */
+  --measure-wide: 110ch;/* operational page column */
+
+  /* ── Space ────────────────────────────────────────────────────────────── */
+  --s-1: 0.25rem;  /* 4  */
+  --s-2: 0.5rem;   /* 8  */
+  --s-3: 0.75rem;  /* 12 */
+  --s-4: 1rem;     /* 16 */
+  --s-5: 1.5rem;   /* 24 = 1lh */
+  --s-6: 2rem;     /* 32 */
+  --s-7: 3rem;     /* 48 = 2lh */
+  --s-8: 4rem;     /* 64 */
+  --gutter: 2ch;   /* page side padding, column gaps */
+  --cell-x: 1ch;   /* table cell inline padding */
+
+  /* ── Rules, shape ─────────────────────────────────────────────────────── */
+  --rule-w: 2px;   /* structural: frames, table head, section rules */
+  --hair-w: 1px;   /* row separators, field dividers */
+  --double-w: 6px; /* double rule (border-style: double) closes a section */
+  --radius: 0;     /* square everywhere */
+  --radius-round: 999px; /* the live dot and nothing else */
+
+  /* ── Focus ────────────────────────────────────────────────────────────── */
+  --focus-w: 2px;
+  --focus-offset: 2px;
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --dur-instant: 80ms;   /* press, toggle */
+  --dur-quick: 140ms;    /* hover fill, focus */
+  --dur-base: 220ms;     /* disclosure, row insert */
+  --dur-slow: 340ms;     /* drawer, sidebar */
+  --dur-pulse: 1600ms;   /* live indicator cycle */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ── Layers ───────────────────────────────────────────────────────────── */
+  --z-sticky: 10;
+  --z-popover: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+
+  /* ── Colour · light ("paper") ─────────────────────────────────────────── */
+  --paper: #f2ece1;          /* page */
+  --paper-sunk: #e8e0d2;     /* wells: table head, code, empty states */
+  --paper-raised: #faf6ef;   /* inputs, popovers, the active row */
+  --ink: #1d1914;            /* text, structural rules */
+  --ink-2: #4b453e;          /* secondary text */
+  --ink-3: #655e55;          /* meta, placeholders, idle status (AA on all papers) */
+  --line: #d3c9b8;           /* hairlines (decorative separation only) */
+  --line-strong: #857a6c;    /* control boundaries (≥3:1 on paper) */
+  --rule: var(--ink);
+
+  --mark: #7d0000;           /* identity red: focus, selection, primary action, links */
+  --mark-fill: #7d0000;      /* solid fills that carry --on-mark text */
+  --on-mark: #fbf3e6;
+  --mark-wash: #ecd9cf;      /* selected row, current step */
+  --link: #7d0000;
+  --link-hover: #1d1914;
+  --focus: #7d0000;
+
+  /* Status roles. *-ink is text-safe (≥4.5:1 on paper, sunk and own wash). */
+  --ok: #2c6a2e;    --ok-wash: #dde5cd;   --ok-line: #8fae86;
+  --run: #1d5d78;   --run-wash: #d5e1e2;  --run-line: #86aab6;
+  --warn: #765300;  --warn-wash: #ede0b9; --warn-line: #c3a45a;
+  --fail: #a11d1a;  --fail-wash: #f1d7cf; --fail-line: #d08b80;
+  --idle: var(--ink-3); --idle-wash: var(--paper-sunk); --idle-line: var(--line-strong);
+
+  --scrim: rgb(29 25 20 / 0.42);
+  --shadow-pop: 0 14px 32px -18px rgb(29 25 20 / 0.45), 0 2px 6px -2px rgb(29 25 20 / 0.12);
+
+  color-scheme: light;
+}
+
+/* ── Colour · dark ("lamp") — explicit ───────────────────────────────────── */
+:root[data-theme="dark"] {
+  --paper: #171512;
+  --paper-sunk: #100e0c;
+  --paper-raised: #211e1a;
+  --ink: #ece5d8;
+  --ink-2: #bcb4a6;
+  --ink-3: #968d80;
+  --line: #36312b;
+  --line-strong: #756c60;
+  --rule: var(--ink);
+
+  --mark: #e8705f;
+  --mark-fill: #8f1010;
+  --on-mark: #fbf3e6;
+  --mark-wash: #3a1d19;
+  --link: #dcb46c;
+  --link-hover: #ece5d8;
+  --focus: #e8705f;
+
+  --ok: #8ccf86;    --ok-wash: #1e2a1c;   --ok-line: #3f6a3b;
+  --run: #7cc2dc;   --run-wash: #16262b;  --run-line: #355e6c;
+  --warn: #e5c066;  --warn-wash: #2c2416; --warn-line: #6f5a2a;
+  --fail: #ff8b7c;  --fail-wash: #361a19; --fail-line: #7a3a33;
+  --idle: var(--ink-3); --idle-wash: var(--paper-sunk); --idle-line: var(--line-strong);
+
+  --scrim: rgb(8 7 6 / 0.66);
+  --shadow-pop: 0 18px 40px -16px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+
+  color-scheme: dark;
+}
+
+/* ── Colour · dark — automatic (keep identical to the block above) ───────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #171512;
+    --paper-sunk: #100e0c;
+    --paper-raised: #211e1a;
+    --ink: #ece5d8;
+    --ink-2: #bcb4a6;
+    --ink-3: #968d80;
+    --line: #36312b;
+    --line-strong: #756c60;
+    --rule: var(--ink);
+
+    --mark: #e8705f;
+    --mark-fill: #8f1010;
+    --on-mark: #fbf3e6;
+    --mark-wash: #3a1d19;
+    --link: #dcb46c;
+    --link-hover: #ece5d8;
+    --focus: #e8705f;
+
+    --ok: #8ccf86;    --ok-wash: #1e2a1c;   --ok-line: #3f6a3b;
+    --run: #7cc2dc;   --run-wash: #16262b;  --run-line: #355e6c;
+    --warn: #e5c066;  --warn-wash: #2c2416; --warn-line: #6f5a2a;
+    --fail: #ff8b7c;  --fail-wash: #361a19; --fail-line: #7a3a33;
+    --idle: var(--ink-3); --idle-wash: var(--paper-sunk); --idle-line: var(--line-strong);
+
+    --scrim: rgb(8 7 6 / 0.66);
+    --shadow-pop: 0 18px 40px -16px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+
+    color-scheme: dark;
+  }
+}
+
+/* ── Reduced motion: durations collapse; nothing depends on movement. ────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-quick: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-pulse: 0ms;
+  }
+}

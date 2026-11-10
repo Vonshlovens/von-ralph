@@ -84,7 +84,7 @@
 <style>
   h1 {
     margin: 0;
-    font-size: 22px;
+    font-size: 24px;
   }
   .lead {
     margin: 4px 0 18px;

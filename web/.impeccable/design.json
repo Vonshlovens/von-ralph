@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-10T04:14:17.112253+00:00",
+  "title": "Ralph design",
+  "extensions": {
+    "motion": [
+      {
+        "name": "quick",
+        "value": "140ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Control fill and border feedback; disabled with reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "header-wrap",
+        "value": "640px"
+      },
+      {
+        "name": "overview-stack",
+        "value": "800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The primary action in a run workflow.",
+      "html": "<button class=\"ds-primary\">New run</button>",
+      "css": ".ds-primary{font:15px var(--font-mono);padding:7px 12px;min-height:36px;border:1px solid var(--mark-fill);background:var(--mark-fill);color:var(--on-mark);border-radius:0;cursor:pointer}.ds-primary:hover{background:var(--ink);border-color:var(--ink);color:var(--paper)}.ds-primary:active{background:var(--mark-fill);color:var(--on-mark)}.ds-primary:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-offset)}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "An ordinary reversible action.",
+      "html": "<button class=\"ds-secondary\">Open plan</button>",
+      "css": ".ds-secondary{font:15px var(--font-mono);padding:7px 12px;min-height:36px;border:1px solid var(--line-strong);background:var(--paper-sunk);color:var(--ink);cursor:pointer}.ds-secondary:hover{background:var(--paper-raised)}.ds-secondary:active{background:var(--paper-sunk)}.ds-secondary:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-offset)}"
+    },
+    {
+      "name": "Directory input",
+      "kind": "input",
+      "description": "A native labeled text field.",
+      "html": "<label class=\"ds-label\">Project directory<input class=\"ds-input\" placeholder=\"~/repos/project\"></label>",
+      "css": ".ds-label{display:grid;gap:6px;font:13px var(--font-mono);color:var(--ink-3)}.ds-input{font:15px var(--font-mono);padding:7px 10px;background:var(--paper-raised);color:var(--ink);border:1px solid var(--line-strong);border-radius:0;caret-color:var(--mark)}.ds-input::placeholder{color:var(--ink-3)}.ds-input:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-offset)}"
+    },
+    {
+      "name": "Run navigation",
+      "kind": "nav",
+      "description": "Pressed buttons select a view without a page transition.",
+      "html": "<div class=\"ds-nav\" role=\"group\" aria-label=\"Run views\"><button aria-pressed=\"true\">Overview</button><button aria-pressed=\"false\">Events</button></div>",
+      "css": ".ds-nav{display:flex;border-bottom:1px solid var(--line)}.ds-nav button{font:15px var(--font-mono);padding:8px 12px;background:transparent;color:var(--ink-3);border:0;border-bottom:2px solid transparent;cursor:pointer}.ds-nav button[aria-pressed=true]{color:var(--ink);border-bottom-color:var(--mark)}.ds-nav button:hover{color:var(--ink)}.ds-nav button:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-offset)}"
+    },
+    {
+      "name": "Working step",
+      "kind": "custom",
+      "refersTo": "working-step",
+      "description": "A task backend explicitly marks this step in progress.",
+      "html": "<article class=\"ds-step\" aria-current=\"step\"><div class=\"ds-step-meta\"><span>T2</span><span>Working</span></div><h3>Connect the plan to the run view</h3></article>",
+      "css": ".ds-step{padding:14px 12px;background:var(--run-wash);outline:1px solid var(--run);outline-offset:-1px;color:var(--ink);font:14px/1.55 var(--font-mono)}.ds-step-meta{display:flex;justify-content:space-between;color:var(--run);font-size:13px}.ds-step h3{font:600 14px/1.55 var(--font-mono);margin:5px 0 0}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Typed Run Sheet",
+    "overview": "Ralph uses the shared von design system for an operational workspace. Show the plan, what the agent is doing, and what happened in each iteration.",
+    "keyCharacteristics": [
+      "Ruled sections",
+      "Written state labels",
+      "Monospace data and proportional narratives"
+    ],
+    "rules": [],
+    "dos": [
+      "Do keep narrative summaries and recorded validation outcomes distinct."
+    ],
+    "donts": [
+      "Don't use color alone to communicate progress or completion."
+    ]
+  }
+}

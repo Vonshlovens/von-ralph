@@ -17,7 +17,7 @@ Bulky text stays on disk next to the database:
   runs/<run-id>/scope-violation-<n>.diff   what a plan/reverse iteration changed out of scope
 ```
 
-## Tables (migrations `0001_init`, `0002_modes`)
+## Tables (migrations `0001_init`, `0002_modes`, `0003_callbacks`, `0004_event_types`)
 
 ### `runs`
 
@@ -68,6 +68,26 @@ plan items after the iteration, NULL = no plan).
 `steer_received`, `iteration_finished`, `rate_limit_sleep`, `run_finished`,
 and for process modes `validate`, `plan_status`, `scope_violation`, `notice`.
 See `src/domain.ts` for each payload.
+
+Plan and observer events use the existing JSON payload column; they add no tables
+or columns. Migration `0004_event_types` adds an index on `(run_id, type, id)` for
+reading snapshots and summaries without scanning the run's event feed:
+
+- `plan_updated` stores the full backend plan, including item statuses, scope,
+  counts, read time, and any read error. The runner publishes changes during an
+  iteration and a final snapshot before `run_finished`. A finished run's plan
+  comes from its own saved events, never a fresh repository read.
+- `observer_status` records whether the separate Haiku observer is enabled and
+  whether its model is available.
+- `activity_summary` and `iteration_summary` store the summary text, iteration,
+  model, timestamp, and status (`ok`, `error`, `timeout`, `interrupted`, or
+  `unavailable`). Iteration summaries also carry the runner's outcome and
+  validation result. These records do not determine task or run state.
+
+`GET /v1/runs/:id/plan` and `/summaries` expose this history. `GET /v1/plan?dir=…`
+reads a project's current plan before a run exists; it is distinct from a run
+snapshot. Runs created before these events existed have no recorded snapshots
+or summaries.
 
 ### `steers`
 

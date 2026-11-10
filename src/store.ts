@@ -57,6 +57,15 @@ export interface StoreShape {
     id: string,
     options?: { readonly afterId?: number; readonly limit?: number },
   ) => Effect.Effect<ReadonlyArray<StoredEvent>, StateError>;
+  /**
+   * Events of the given types, oldest first. `newest` returns only the newest
+   * `limit` of them (still oldest first).
+   */
+  readonly eventsOfType: (
+    id: string,
+    types: ReadonlyArray<RalphEvent["type"]>,
+    options?: { readonly limit?: number; readonly newest?: boolean },
+  ) => Effect.Effect<ReadonlyArray<StoredEvent>, StateError>;
   readonly appendRaw: (
     id: string,
     iteration: number,
@@ -171,6 +180,11 @@ const migrations = {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE runs ADD COLUMN callback_url TEXT`;
   }),
+  /** Plan snapshots and observer summaries are events; find them without a scan. */
+  "0004_event_types": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE INDEX events_run_type ON events (run_id, type, id)`;
+  }),
 };
 
 // ------------------------------------------------------------- row codecs
@@ -229,6 +243,23 @@ export const formatLogLine = (e: RalphEvent): string | undefined => {
       return `[${t}] 🚧 out-of-scope changes: ${clip(e.files.join(", "), 300)}${e.diffPath === undefined ? "" : ` (diff: ${e.diffPath})`}`;
     case "notice":
       return `[${t}] ℹ️  ${e.text}`;
+    case "plan_updated": {
+      const c = e.plan.counts;
+      const doing = e.plan.items.filter((i) => i.status === "in_progress").map((i) => i.id);
+      return `[${t}] 🗺️  ${e.final === true ? "final plan" : "plan updated"} (${e.plan.backend}): ${c.open} open, ${c.done} done${doing.length > 0 ? `, in progress: ${clip(doing.join(", "), 120)}` : ""}${e.plan.error === null ? "" : ` · read error: ${clip(e.plan.error, 200)}`}`;
+    }
+    case "activity_summary":
+    case "iteration_summary": {
+      const s = e.summary;
+      const what = s.kind === "iteration" ? `iteration ${s.iteration} summary` : "now";
+      return s.status === "ok"
+        ? `[${t}] 👀 ${what}: ${clip(s.text, 600)}`
+        : `[${t}] 👀 ${what}: (${s.status}${s.error === undefined ? "" : `: ${clip(s.error, 200)}`})`;
+    }
+    case "observer_status":
+      return e.available === false
+        ? `[${t}] 👀 observer ${e.model ?? ""} unavailable: ${e.error ?? "unknown"}`
+        : `[${t}] 👀 observer: ${e.model ?? "?"}${e.error === null ? "" : ` (${e.error})`}`;
     case "rate_limit_sleep":
       return `[${t}] ⏳ Rate limited. Sleeping ${Math.round(e.seconds / 60)} minutes...`;
     case "run_finished":
@@ -348,6 +379,26 @@ export const makeStore = (root: string) =>
         Effect.mapError(fail(`events/${id}`)),
       );
 
+    const eventsOfType = (
+      id: string,
+      types: ReadonlyArray<RalphEvent["type"]>,
+      options?: { readonly limit?: number; readonly newest?: boolean },
+    ) =>
+      (options?.newest === true
+        ? sql<{ readonly id: number; readonly data: string }>`
+            SELECT id, data FROM events WHERE run_id = ${id} AND ${sql.in("type", types)}
+            ORDER BY id DESC LIMIT ${options?.limit ?? 1000}`
+        : sql<{ readonly id: number; readonly data: string }>`
+            SELECT id, data FROM events WHERE run_id = ${id} AND ${sql.in("type", types)}
+            ORDER BY id LIMIT ${options?.limit ?? 1000}`
+      ).pipe(
+        Effect.map((rows) => {
+          const out = rows.map((r) => ({ id: r.id, event: JSON.parse(r.data) as RalphEvent }));
+          return options?.newest === true ? out.reverse() : out;
+        }),
+        Effect.mapError(fail(`events/${id}`)),
+      );
+
     const appendRaw = (id: string, iteration: number, line: string) =>
       append(p.join(runDir(id), "raw", `${iteration}.jsonl`), `${line}\n`);
 
@@ -394,6 +445,7 @@ export const makeStore = (root: string) =>
       iterations,
       appendEvent,
       events,
+      eventsOfType,
       appendRaw,
       writeIteration,
       addSteer,

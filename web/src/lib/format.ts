@@ -3,7 +3,7 @@ import type { RalphEvent, Run } from "./api.svelte.js";
 
 export const basename = (p: string) => p.replace(/\/+$/, "").split("/").at(-1) ?? p;
 
-export const tildify = (p: string) => p.replace(/^\/home\/[^/]+/, "~");
+export const tildify = (p: string) => p.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, "~");
 
 export function ago(iso: string | null, now = Date.now()): string {
   if (iso === null) return "—";

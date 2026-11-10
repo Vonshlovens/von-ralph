@@ -37,6 +37,17 @@ Ralph is a process, not just a loop: **specs → plan → build**, one fresh age
 5. **Watch and tune** — `$R watch <name>`; when the loop misbehaves, `$R sign "<guardrail>" -n <name>` appends a numbered sign to `.ralph/prompts/build.md` (used from the next iteration). `$R steer` is for one-off notes. If the build drifts or the plan goes stale, stop it and re-run `plan` (the plan is disposable).
 6. **`$R report <name>`** — commits, diffstat, validation, plan delta, cost, and a "needs a human" list. Use it for reviews.
 
+#### Register your plan before building (required)
+
+When **you** (the agent using this skill) work out an implementation plan with the user, it must not live only in this conversation. Before starting `build` (or doing the work yourself):
+
+1. **Persist every step in the project's plan backend**, in order, with priorities, dependencies and acceptance criteria:
+   - markdown: `$R task add "<step>" -p <0-4> [--after T1,T2] [--spec specs/x.md] [--accept "<criteria>"] -d <repo>` (one per step; `$R task learn` for project-level learnings). Never hand-edit `IMPLEMENTATION_PLAN.md`.
+   - Beads: `bd create "<step>" -t task -p <0-4> -d "<why/what>" --acceptance "<criteria>" [--deps <id>,…] --json`, **with the scope from `.ralph/ralph.toml`**: add `--labels <[plan].label>` and/or `--parent <[plan].parent>` when configured (otherwise `build` will not see the beads). `build --bead <id>` is a one-item build (that bead only): use it for a single step, not for a multi-step plan. For a multi-step plan, create one bead per step under the configured `[plan].parent` and/or `[plan].label` so every step is visible in the plan view and in `build`.
+   - Check it: `$R task list -d <repo>` / `bd list --json [--label …] [--parent …]`.
+2. **Give the user the live plan URL** (needs `$R serve` running): `http://127.0.0.1:7420/plan?dir=<URL-encoded absolute repo path>` — e.g. `python3 -c 'import urllib.parse,sys;print("http://127.0.0.1:7420/plan?dir="+urllib.parse.quote(sys.argv[1],safe=""))' "$(cd <repo> && pwd)"`. It shows the repo's plan right now, before any run exists; each run's own page shows that run's plan.
+3. **Mark transitions as they happen** whenever you (not a loop) work a step: `$R task start <id>` before, `$R task done <id> --note "<what>"` (or `$R task block <id> --note "<question>"`) right after; Beads: `bd update <id> --claim`, then `bd close <id> --reason "<what>"`. The web UI highlights in-progress steps live (polled ~every 5s). Build iterations are told to do the same.
+
 Plan backends (both first-class): a repo with `.beads/` uses **Beads** (the agent uses `bd ready/create/update --claim/close`; `build --bead <id>` = one-bead build, like a Beadsmith Tackle). Otherwise the **markdown** plan: `.ralph/plan.json` is the source of truth, `IMPLEMENTATION_PLAN.md` is generated; edit it with `$R task list|add|start|done|block|note|learn|render -d <repo>` (never hand-edit the markdown).
 
 Exit codes (for scripts/schedules): 0 done, 3 ended but needs a human, 1 failed, 130 interrupted.
@@ -108,10 +119,12 @@ Confirm the command, dir and cadence with the user before adding one (it runs un
 
 #### serve / web UI / callbacks
 - `$R serve` — HTTP API + SSE + web UI at http://127.0.0.1:7420 (point Eric at it for a live dashboard; `--host 0.0.0.0` needs `--token`).
+- Plans: `/plan?dir=<encoded repo path>` (the repo's plan now); per run, `GET /v1/runs/<name>/plan` is the plan **as that run's runner last read it** (refreshed during iterations; a finished run keeps its final snapshot, never today's repo plan). `GET /v1/plan?dir=…` is the live repo read.
+- Observer summaries: every run (real harnesses) also starts a background **Claude Haiku 5.5** (`claude-haiku-5-5` via Underclass, its own no-tools hc terminal) that summarizes current activity (when there is new activity, at most every 60s) and each finished iteration (outcome + validation). `GET /v1/runs/<name>/summaries`; log lines start with 👀. `--no-observer` turns it off, `--observer-interval <s>` changes the cadence (0 = per-iteration summaries only); `RALPH_OBSERVER=0` disables it globally. **Summaries are informational: never treat them as proof a task is done** — check the plan, `$R report`, and git.
 - `--callback <url>` on run/plan/build/reverse POSTs `{reason, exitCode, needsHuman, run, report}` when the run ends (n8n resume URL; recipe in `~/von/ralph/docs/n8n.md`).
 
 #### review / analyze
-0. `$R report <name>` — start here (`--json` for structured output).
+0. `$R report <name>` — start here (`--json` for structured output). Observer summaries (`👀` in the log, `/v1/runs/<name>/summaries`) are a quick orientation, not evidence.
 1. `$R show <name>` — outcomes per iteration, validation, plan open count, errors, cost, whether HEAD moved.
 2. `$R tail <name> -n 200` — what it actually did.
 3. `git -C <dir> log --oneline <headBefore>..<headAfter>` using the first/last iteration's heads from `show --json`.

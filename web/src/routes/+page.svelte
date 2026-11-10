@@ -101,11 +101,11 @@
   </div>
   <div class="actions">
     <div class="seg" role="group" aria-label="Filter">
-      <button class:on={filter === "all"} onclick={() => (filter = "all")}>All</button>
-      <button class:on={filter === "active"} onclick={() => (filter = "active")}>Running</button>
-      <button class:on={filter === "attention"} onclick={() => (filter = "attention")}>Needs a look</button>
+      <button class:on={filter === "all"} aria-pressed={filter === "all"} onclick={() => (filter = "all")}>All</button>
+      <button class:on={filter === "active"} aria-pressed={filter === "active"} onclick={() => (filter = "active")}>Running</button>
+      <button class:on={filter === "attention"} aria-pressed={filter === "attention"} onclick={() => (filter = "attention")}>Needs a look</button>
     </div>
-    <button class="primary" onclick={() => (showNew = !showNew)}>{showNew ? "Cancel" : "New run"}</button>
+    <button class="primary" aria-expanded={showNew} onclick={() => (showNew = !showNew)}>{showNew ? "Cancel" : "New run"}</button>
   </div>
 </div>
 
@@ -229,7 +229,7 @@
   }
   h1 {
     margin: 0;
-    font-size: 22px;
+    font-size: 24px;
     letter-spacing: -0.01em;
   }
   .bar p {
@@ -262,10 +262,10 @@
     color: var(--muted);
   }
   .seg button:first-child {
-    border-radius: 6px 0 0 6px;
+    border-radius: 0;
   }
   .seg button:last-child {
-    border-radius: 0 6px 6px 0;
+    border-radius: 0;
   }
   .seg button.on {
     color: var(--ink);
@@ -301,16 +301,23 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    border-top: 1px solid var(--line);
   }
   .run {
     display: block;
-    padding: 12px 14px;
+    min-width: 0;
+    padding: 18px 14px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
     text-decoration: none;
     transition: border-color 0.15s;
   }
   .run:hover {
-    border-color: var(--muted);
+    background: var(--panel-2);
   }
   .top {
     display: flex;
@@ -321,6 +328,7 @@
   .name {
     font-weight: 600;
     font-size: 15px;
+    overflow-wrap: anywhere;
   }
   .mode {
     color: var(--accent);
@@ -336,6 +344,7 @@
     margin-top: 4px;
     color: var(--muted);
   }
+  .meta span { min-width: 0; overflow-wrap: anywhere; }
   .prompt {
     margin-top: 4px;
     white-space: nowrap;
@@ -346,7 +355,7 @@
     margin-top: 8px;
     height: 3px;
     background: var(--panel-2);
-    border-radius: 2px;
+    border-radius: 0;
     overflow: hidden;
   }
   .progress span {

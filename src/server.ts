@@ -8,6 +8,9 @@
  *   POST /v1/runs                         start a run (StartRequest) → 201 {run}
  *   GET  /v1/runs/:id                     run + iterations (id = run id or name)
  *   GET  /v1/runs/:id/report              commits, validation, plan delta, needs-a-human
+ *   GET  /v1/runs/:id/plan                the run's plan as its runner last read it (final once ended)
+ *   GET  /v1/runs/:id/summaries           observer summaries: current activity + per iteration
+ *   GET  /v1/plan?dir=<abs dir>           a project's plan right now (no run needed)
  *   GET  /v1/runs/:id/events[?after&limit]
  *   GET  /v1/runs/:id/stream[?after]      SSE of normalized events; ends at run_finished
  *   GET  /v1/runs/:id/log[?lines]         text/plain
@@ -22,18 +25,27 @@
  * With a token (`--token` / RALPH_SERVE_TOKEN) every /v1 route except health
  * needs `Authorization: Bearer <token>` (or `?token=` for EventSource).
  */
-import { type Context, Data, Effect, Layer, Schema, Stream } from "effect";
+import { type Context, Data, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/process";
 import { HttpRouter, HttpServerRequest, HttpServerResponse, HttpStaticServer } from "effect/http";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isCallbackUrl } from "./callback.ts";
-import { autoName, launchDetached, runArgv, safeName } from "./cli/shared.ts";
+import { autoName, launchDetached, restartArgv, safeName } from "./cli/shared.ts";
 import { steerRun, stopRun } from "./control.ts";
-import { HarnessId, type Instance, RunMode, StateError } from "./domain.ts";
+import {
+  HarnessId,
+  type Instance,
+  type PlanView,
+  RunMode,
+  StateError,
+  type Summary,
+} from "./domain.ts";
 import { checkBinary } from "./harness.ts";
 import { harnesses } from "./registry.ts";
+import { type PlanReader, beadsFilter, countsOf, planReader } from "./plan.ts";
+import { loadProject, resolveBackend } from "./project.ts";
 import { buildReport } from "./report.ts";
 import * as Schedules from "./schedule.ts";
 import { NAME_RE, Store, isAlive } from "./store.ts";
@@ -66,6 +78,10 @@ export const StartRequest = Schema.Struct({
   bead: Opt(Schema.String),
   scope: Opt(Schema.String),
   callbackUrl: Opt(Schema.String),
+  /** false = no background observer summaries. */
+  observer: Opt(Schema.Boolean),
+  /** Seconds between current-activity summaries; 0 = end-of-iteration only. */
+  observerInterval: Opt(Schema.Int),
 });
 export type StartRequest = typeof StartRequest.Type;
 
@@ -103,6 +119,8 @@ export const startArgv = (
     ...opt("--bead", req.bead),
     ...(req.mode === "run" ? [] : opt("--scope", req.scope)),
     ...opt("--callback", req.callbackUrl),
+    ...(req.observer === false ? ["--no-observer"] : []),
+    ...opt("--observer-interval", req.observerInterval),
     "--quiet",
     ...(req.mode === "run" ? [req.prompt ?? ""] : []),
   ];
@@ -239,6 +257,121 @@ const runsFrames = Stream.unfold<RunsStreamState, string, StateError, Store>(
     }),
 ).pipe(Stream.filter((f) => f !== ""));
 
+// -------------------------------------------------------------- plan + summaries
+
+/**
+ * A run's plan: only ever the runner's persisted snapshot. A finished run
+ * returns its own final snapshot, never a fresh read of today's repo.
+ */
+export const runPlan = (r: Instance) =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const last = (yield* store.eventsOfType(r.id, ["plan_updated"], { limit: 1, newest: true }))[0];
+    const live = r.status === "running" && isAlive(r.pid);
+    const base = { runId: r.id, mode: r.mode, live, final: r.status !== "running" };
+    if (last === undefined || last.event.type !== "plan_updated") {
+      return {
+        ...base,
+        backend: null,
+        scope: null,
+        goal: null,
+        items: [],
+        learnings: [],
+        counts: countsOf([]),
+        updatedAt: null,
+        iteration: 0,
+        error: null,
+      };
+    }
+    return { ...base, ...last.event.plan, iteration: last.event.iteration };
+  });
+
+export const runSummaries = (r: Instance) =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const summaryOf = (e: { readonly event: unknown }) =>
+      (e.event as { readonly summary: Summary }).summary;
+    const its = yield* store.eventsOfType(r.id, ["iteration_summary"], { limit: 10_000 });
+    const byIteration = new Map<number, Summary>();
+    for (const e of its) byIteration.set(summaryOf(e).iteration, summaryOf(e));
+    const activity = (yield* store.eventsOfType(r.id, ["activity_summary"], {
+      limit: 50,
+      newest: true,
+    })).map(summaryOf);
+    const status = (yield* store.eventsOfType(r.id, ["observer_status"], {
+      limit: 1,
+      newest: true,
+    }))[0]?.event;
+    return {
+      runId: r.id,
+      observer:
+        status?.type === "observer_status"
+          ? {
+              enabled: status.enabled,
+              model: status.model,
+              available: status.available,
+              error: status.error,
+              activityIntervalSeconds: status.activityIntervalSeconds ?? null,
+            }
+          : null,
+      current: activity.at(-1) ?? null,
+      activity,
+      iterations: [...byIteration.values()].sort((a, b) => a.iteration - b.iteration),
+    };
+  });
+
+const PLAN_CACHE_MS = 5000;
+
+/** `GET /v1/plan?dir=`: one reader per project, single-flight, cached for 5s. */
+export const projectPlans = () => {
+  const entries = new Map<
+    string,
+    {
+      readonly key: string;
+      readonly reader: PlanReader;
+      readonly lock: Semaphore.Semaphore;
+      last: { readonly at: number; readonly view: PlanView } | null;
+    }
+  >();
+  return (dir: string) =>
+    Effect.gen(function* () {
+      const project = yield* loadProject(dir);
+      if (!project.initialized) {
+        return yield* new StateError({
+          path: dir,
+          reason: "no such ralph project (no .ralph/ralph.toml)",
+        });
+      }
+      const backend = resolveBackend(project);
+      const filter = beadsFilter(project, null);
+      const key = JSON.stringify({ backend, filter, goal: project.goal });
+      let entry = entries.get(dir);
+      if (entry === undefined || entry.key !== key) {
+        entry = {
+          key,
+          reader: planReader({ dir, backend, filter, goal: project.goal, timeoutMs: 20_000 }),
+          lock: Semaphore.makeUnsafe(1),
+          last: null,
+        };
+        entries.set(dir, entry);
+      }
+      const e = entry;
+      const view = yield* e.lock.withPermits(1)(
+        Effect.suspend(() =>
+          e.last !== null && Date.now() - e.last.at < PLAN_CACHE_MS
+            ? Effect.succeed(e.last.view)
+            : e.reader.read.pipe(
+                Effect.map((st) => {
+                  e.last = { at: Date.now(), view: st.view };
+                  return st.view;
+                }),
+              ),
+        ),
+      );
+      return { dir, ...view, live: true, final: false };
+    });
+};
+
 // ------------------------------------------------------------------ routes
 
 /** Services handlers use; captured once when the routes are built. */
@@ -280,6 +413,7 @@ export const routes = (opts: ServeOptions) =>
     Effect.gen(function* () {
       const store = yield* Store;
       const services: Context.Context<AppServices> = yield* Effect.context<AppServices>();
+      const projectPlan = projectPlans();
       const add = (method: "GET" | "POST", p: `/${string}`, h: Handler, open = false) =>
         router.add(method, p, guard(opts, h, open).pipe(Effect.provideContext(services)));
 
@@ -332,6 +466,36 @@ export const routes = (opts: ServeOptions) =>
         "/v1/runs/:id/report",
         Effect.gen(function* () {
           return json(yield* buildReport(yield* runId));
+        }),
+      );
+
+      yield* add(
+        "GET",
+        "/v1/runs/:id/plan",
+        Effect.gen(function* () {
+          return json(yield* runPlan(yield* store.get(yield* runId)));
+        }),
+      );
+
+      yield* add(
+        "GET",
+        "/v1/runs/:id/summaries",
+        Effect.gen(function* () {
+          return json(yield* runSummaries(yield* store.get(yield* runId)));
+        }),
+      );
+
+      yield* add(
+        "GET",
+        "/v1/plan",
+        Effect.gen(function* () {
+          const req = yield* HttpServerRequest.HttpServerRequest;
+          const raw = searchParams(req).get("dir") ?? "";
+          if (raw.trim() === "") return yield* new BadRequest({ message: "dir is required" });
+          const dir = path.resolve(expandHome(raw));
+          if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory())
+            return yield* new StateError({ path: dir, reason: "no such directory" });
+          return json(yield* projectPlan(dir));
         }),
       );
 
@@ -433,8 +597,8 @@ export const routes = (opts: ServeOptions) =>
             });
           }
           yield* checkBinary(harnesses[r.harness]);
-          const cfg = { ...r, maxIterations: max ?? r.maxIterations };
-          const run = yield* launchDetached(runArgv(cfg), r.name, r.dir);
+          const argv = yield* restartArgv(r, max ?? r.maxIterations);
+          const run = yield* launchDetached(argv, r.name, r.dir);
           return json({ run: yield* summary(run) }, 201);
         }),
       );

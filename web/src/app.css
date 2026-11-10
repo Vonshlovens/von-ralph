@@ -1,51 +1,27 @@
+/* Bundled von design tokens. See web/DESIGN.md. */
+@import "./lib/design-tokens.css";
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+}
+
 :root {
-  --bg: #f4f1ea;
-  --panel: #fffdf8;
-  --panel-2: #ece7dc;
-  --line: #d9d2c3;
-  --ink: #1f2229;
-  --muted: #6b6e78;
-  --accent: #b7791f;
-  --accent-ink: #fffdf8;
-  --good: #2f8a57;
-  --bad: #c2453c;
-  --warn: #b7791f;
-  --info: #3c6fb4;
-  --mono: "JetBrains Mono", "Iosevka", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #11141a;
-    --panel: #181c24;
-    --panel-2: #1f2430;
-    --line: #2b3140;
-    --ink: #e8e4da;
-    --muted: #8b909c;
-    --accent: #f2b84b;
-    --accent-ink: #1a1408;
-    --good: #6cc48a;
-    --bad: #ec7a70;
-    --warn: #f2b84b;
-    --info: #85aef0;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #11141a;
-  --panel: #181c24;
-  --panel-2: #1f2430;
-  --line: #2b3140;
-  --ink: #e8e4da;
-  --muted: #8b909c;
-  --accent: #f2b84b;
-  --accent-ink: #1a1408;
-  --good: #6cc48a;
-  --bad: #ec7a70;
-  --warn: #f2b84b;
-  --info: #85aef0;
-  color-scheme: dark;
+  --bg: var(--paper);
+  --panel: var(--paper-raised);
+  --panel-2: var(--paper-sunk);
+  --muted: var(--ink-3);
+  --accent: var(--mark);
+  --accent-ink: var(--on-mark);
+  --good: var(--ok);
+  --bad: var(--fail);
+  --info: var(--run);
+  --active-bg: var(--run-wash);
+  --mono: var(--font-mono);
+  --sans: var(--font-prose);
 }
 
 * {
@@ -56,8 +32,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 14px/1.5 var(--sans);
 }
+html { font-size: 100%; }
+body { font: var(--fs-base)/1.6 var(--font-ui); }
 a {
   color: inherit;
 }
@@ -65,7 +42,7 @@ code,
 pre,
 .mono {
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 button,
 input,
@@ -78,25 +55,26 @@ input,
 select,
 textarea {
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 7px 10px;
   width: 100%;
 }
 input:focus,
 select:focus,
 textarea:focus,
-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 button {
   background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 7px 12px;
   cursor: pointer;
   white-space: nowrap;
+  min-height: 36px;
 }
 button:hover:not(:disabled) {
   border-color: var(--muted);
@@ -106,8 +84,8 @@ button:disabled {
   cursor: default;
 }
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--mark-fill);
+  border-color: var(--mark-fill);
   color: var(--accent-ink);
   font-weight: 600;
 }
@@ -130,7 +108,7 @@ label > textarea {
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 .muted {
   color: var(--muted);
@@ -140,10 +118,10 @@ label > textarea {
   align-items: center;
   gap: 6px;
   font-family: var(--mono);
-  font-size: 11.5px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid currentColor;
+  font-size: 12px;
+  padding: 1px 0;
+  border-radius: 0;
+  border: 0;
   white-space: nowrap;
 }
 .pill::before {
@@ -157,7 +135,7 @@ label > textarea {
   color: var(--good);
 }
 .s-running::before {
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: pulse var(--dur-pulse) ease-in-out infinite;
 }
 .s-finished {
   color: var(--info);
@@ -176,4 +154,27 @@ label > textarea {
 }
 .error {
   color: var(--bad);
+}
+
+html { scrollbar-color: var(--ink-3) var(--paper-sunk); }
+body { min-width: 320px; }
+button, a, input, select, textarea, summary { -webkit-tap-highlight-color: var(--mark-wash); }
+a { text-underline-offset: 0.2em; }
+input, textarea { caret-color: var(--mark); }
+input::placeholder, textarea::placeholder { color: var(--ink-3); opacity: 1; }
+::selection { background: var(--mark-fill); color: var(--on-mark); }
+button { transition: background var(--dur-quick) var(--ease-out), border-color var(--dur-quick) var(--ease-out); }
+button:hover:not(:disabled) { background: var(--paper-raised); }
+button.primary:hover:not(:disabled) { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+button:active:not(:disabled) { background: var(--paper-sunk); }
+button.primary:active:not(:disabled) { background: var(--mark-fill); color: var(--on-mark); }
+summary:hover { color: var(--ink); }
+input[type="checkbox"] { accent-color: var(--mark-fill); }
+.mono, time, td, progress { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (pointer: coarse) {
+  button, nav a { min-height: 44px; }
+  nav a { display: inline-flex; align-items: center; }
 }

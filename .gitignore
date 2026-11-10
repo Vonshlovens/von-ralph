@@ -9,3 +9,7 @@ node_modules
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Local activity records and macOS metadata are not source artifacts.
+.beads/interactions.jsonl
+.DS_Store

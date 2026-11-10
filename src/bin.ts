@@ -17,6 +17,9 @@ import {
   callbackOf,
   exitCodeFor,
   nameArg,
+  observerFlags,
+  observerOf,
+  restartArgv,
   runArgv,
   spawnDetached,
 } from "./cli/shared.ts";
@@ -95,6 +98,7 @@ const run = Command.make(
       ),
       Flag.optional,
     ),
+    ...observerFlags,
   },
   (a) =>
     Effect.gen(function* () {
@@ -122,7 +126,14 @@ const run = Command.make(
       if (a.detach) {
         yield* checkBinary(harness);
         return yield* spawnDetached(
-          runArgv({ ...cfg, harness: harness.id, mode: "run", scope: null }),
+          runArgv({
+            ...cfg,
+            harness: harness.id,
+            mode: "run",
+            scope: null,
+            observer: !a.noObserver,
+            observerIntervalSeconds: Option.getOrNull(a.observerInterval),
+          }),
           name,
           cfg.dir,
         );
@@ -134,6 +145,7 @@ const run = Command.make(
         pauseBetween: defaults.pauseBetween,
         maxConsecutiveFailures: defaults.maxConsecutiveFailures,
         echo: !a.quiet,
+        observer: observerOf(a),
       });
       process.exitCode = exitCodeFor(reason);
     }),
@@ -363,9 +375,12 @@ const restart = Command.make(
         });
       }
       yield* checkBinary(harnesses[r.harness]);
-      const cfg = { ...r, maxIterations: Option.getOrElse(a.max, () => r.maxIterations) };
       // Process modes re-read ralph.toml and the prompts; run mode replays the prompt.
-      yield* spawnDetached(runArgv(cfg), r.name, r.dir);
+      const argv = yield* restartArgv(
+        r,
+        Option.getOrElse(a.max, () => r.maxIterations),
+      );
+      yield* spawnDetached(argv, r.name, r.dir);
     }),
 ).pipe(Command.withDescription("Start a new run with a previous run's settings (detached)"));
 

@@ -75,8 +75,10 @@ context: the plan, the specs, the code, and git history are the only memory.
 
 ## Task
 
-1. Pick the single most important ready item from the plan{{scope}}. Before
-   changing anything, search the codebase: do not assume it is not implemented.
+1. Pick the single most important ready item from the plan{{scope}} and mark it
+   in progress right away (see "Plan" below) so the live plan shows what you are
+   working on. Before changing anything, search the codebase: do not assume it
+   is not implemented.
    Use parallel subagents for searching and reading if your harness has them,
    but only one at a time for building and testing.
 2. Implement it completely. No placeholders or stubs.
