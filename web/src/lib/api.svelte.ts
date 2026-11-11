@@ -60,6 +60,10 @@ export interface PlanItem {
   spec_refs: string[];
   acceptance: string;
   notes: string[];
+  /** Open / in progress with every dependency done (actionable now). */
+  ready?: boolean;
+  /** Beads only: bd's own status (closed, hooked, pinned, …). */
+  rawStatus?: string;
 }
 
 export interface RunPlan {
@@ -72,6 +76,8 @@ export interface RunPlan {
   scope?: { label: string | null; parent: string | null; bead: string | null } | null;
   live?: boolean;
   final?: boolean;
+  /** The plan as this run first read it (null when only one read exists or none). */
+  baseline?: { iteration: number; updatedAt: string; done: string[]; ids?: string[] } | null;
 }
 
 export interface ActivitySummary {

@@ -283,7 +283,19 @@ export const runPlan = (r: Instance) =>
         error: null,
       };
     }
-    return { ...base, ...last.event.plan, iteration: last.event.iteration };
+    // The first read is the plan as the run found it, so the UI can show what this run moved.
+    const first = (yield* store.eventsOfType(r.id, ["plan_updated"], { limit: 1 }))[0];
+    const baseline =
+      first !== undefined && first.event.type === "plan_updated"
+        ? {
+            iteration: first.event.iteration,
+            updatedAt: first.event.plan.updatedAt,
+            counts: first.event.plan.counts,
+            done: first.event.plan.items.filter((i) => i.status === "done").map((i) => i.id),
+            ids: first.event.plan.items.map((i) => i.id),
+          }
+        : null;
+    return { ...base, ...last.event.plan, iteration: last.event.iteration, baseline };
   });
 
 export const runSummaries = (r: Instance) =>
