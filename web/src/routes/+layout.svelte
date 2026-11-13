@@ -36,7 +36,7 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header>
   <a class="brand" href="/">
-    <span class="mark">r</span>
+    <img class="mark" src="/favicon.png" alt="" width="26" height="26" />
     <span>ralph</span>
   </a>
   <nav aria-label="Main navigation">
@@ -94,13 +94,10 @@
     letter-spacing: 0.02em;
   }
   .mark {
-    display: grid;
-    place-items: center;
+    display: block;
     width: 26px;
     height: 26px;
-    border-radius: 0;
-    background: var(--mark-fill);
-    color: var(--on-mark);
+    object-fit: contain;
   }
   nav {
     display: flex;
